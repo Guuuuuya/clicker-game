@@ -123,6 +123,47 @@ h2{
 #prestige{width:100%; max-width:420px}
 @media (prefers-reduced-motion: reduce){ #bill:active{transform:none} }
 
+/* ---- CC parity (step 9) ---- */
+.srow{display:flex; align-items:center; gap:var(--s2); margin-top:var(--s2); font-size:12px}
+.srow .pgain{flex:1}
+.milkbar{
+  height:8px; background:var(--panel2); border:1px solid var(--line); border-radius:6px;
+  overflow:hidden; margin:var(--s1) 0; position:relative;
+}
+.milkbar i{display:block; height:100%; width:0; background:#e9fff0}
+.milkbar b{
+  position:absolute; inset:0; background:var(--bad); text-align:center;
+  font-size:8px; color:#fff; font-weight:400;
+}
+#goldens{position:relative}
+.gcookie{
+  position:absolute; width:34px; height:34px; border-radius:50%; z-index:40;
+  background:radial-gradient(circle at 35% 30%, #ffe9a8, #d8a63a 60%, #8a6318);
+  border:2px solid #5c4109; cursor:pointer; display:flex; align-items:center;
+  justify-content:center; font-size:14px; color:#5c4109;
+  box-shadow:0 0 14px #ffcc4daa; transition:none;
+}
+.gcookie.fade{opacity:.35}
+.gcookie:hover{transform:scale(1.12)}
+.egg{
+  position:absolute; inset:0; z-index:80; background:#000000d0;
+  display:flex; align-items:center; justify-content:center; text-align:center;
+  padding:var(--s5); font-size:15px; line-height:1.7;
+}
+.egg[hidden]{display:none}
+.eggcode{color:var(--gold); letter-spacing:.08em}
+.console{
+  background:var(--bg); border:1px solid var(--line); border-radius:8px; padding:var(--s3);
+  font-size:13px;
+}
+.console .out{
+  color:var(--dim); font-size:12px; white-space:pre-wrap; max-height:190px;
+  overflow:auto; margin-top:var(--s2);
+}
+.graph{margin-top:var(--s3)}
+.graph .glab{font-size:11px; color:var(--dim); margin-bottom:2px}
+.graph canvas{display:block; width:100%; height:54px; background:var(--panel2); border:1px solid var(--line); border-radius:6px}
+
 /* ---- achievements + stats (step 8) ---- */
 .agrid{display:grid; grid-template-columns:1fr 1fr; gap:var(--s2); margin-top:var(--s2)}
 .acard{
@@ -297,6 +338,12 @@ select.btn{padding-right:var(--s2)}
     <h2>Buildings</h2>
     <div class="buysel" id="buysel" role="group" aria-label="Buy amount"></div>
     <div id="brows"></div>
+    <div id="goldens"></div>
+    <div class="srow">
+      <span class="pgain" id="seaslab"></span>
+      <button class="btn" id="buyseason" type="button">Season</button>
+    </div>
+    <div class="milkbar" id="milkbar"><i></i><b id="milktip"></b></div>
   </section>
 
   <section id="upgrades" class="col panel">
@@ -333,6 +380,8 @@ select.btn{padding-right:var(--s2)}
 </main>
 
 <div id="toasts" aria-live="polite"></div>
+
+<div class="egg" id="egg" hidden></div>
 
 <div class="ovl" id="ovl" hidden>
   <div class="ovlbox" role="dialog" aria-modal="true" aria-labelledby="ovltitle">
@@ -446,12 +495,12 @@ function fmt(v) {
 
 // ---------------------------------------------------------------- buildings
 const BUILDINGS = [
-  { id: 'b0', label: 'Auto I',   icon: '◻', baseCost: 50,      baseCps: 1     },
-  { id: 'b1', label: 'Auto II',  icon: '▣', baseCost: 500,     baseCps: 12    },
-  { id: 'b2', label: 'Auto III', icon: '▤', baseCost: 5000,    baseCps: 100   },
-  { id: 'b3', label: 'Auto IV',  icon: '▥', baseCost: 50000,   baseCps: 800   },
-  { id: 'b4', label: 'Auto V',   icon: '▦', baseCost: 500000,  baseCps: 6400  },
-  { id: 'b5', label: 'Auto VI',  icon: '▧', baseCost: 5000000, baseCps: 51000 },
+  { id:'b0', label:'Auto I',   icon:'◻', baseCost:50,      baseCps:1,     lore:'You would be amazed at what a well-oiled machine does with a single gram of dough.' },
+  { id:'b1', label:'Auto II',  icon:'▣', baseCost:500,     baseCps:12,    lore:'It hums. It always hums. You have learned to tune it out. Mostly.' },
+  { id:'b2', label:'Auto III', icon:'▤', baseCost:5000,    baseCps:100,   lore:'Production tripled overnight. Nobody asked how. Nobody wants to know.' },
+  { id:'b3', label:'Auto IV',  icon:'▥', baseCost:50000,   baseCps:800,   lore:'The foreman has stopped sleeping. He says the machines dream in numbers.' },
+  { id:'b4', label:'Auto V',   icon:'▦', baseCost:500000,  baseCps:6400,  lore:'At this scale output is measured in lifetimes rather than minutes.' },
+  { id:'b5', label:'Auto VI',  icon:'▧', baseCost:5000000, baseCps:51000, lore:'We stopped calling it a factory. Now it is simply The Machine.' },
 ];
 const CAP = 1000;                       // hard cap per building. 1.15^6000 still
                                         // overflows Number, so CEIL is the real guard.
@@ -560,6 +609,7 @@ function clickPower() {
   if (has('u_c3')) p *= 3;
   if (has('u_c6')) p *= 10;
   p *= ascendMult() * legacyMult() * achBonus();
+  if (frenzyOn()) p *= FRENZY_MULT;
   // Cloned Hands pays a share of cps per click. Additive, same reason as C2:
   // a multiplicative factor here would be self-referential and undefined.
   if (has('u_c5')) p += 0.01 * d.cps;
@@ -592,6 +642,7 @@ function calc() {
   // caps at x5 so it cannot run away during a long absence.
   cps *= Math.pow(1.05, treeRank('A1')) * (1 + 0.2 * treeRank('A3'));
   cps *= idleMult();
+  cps *= milkMult() * seasonMult() * cpsBoostMult();
   // Prestige multipliers. They read `earned`, never the spendable `points` pool, so
   // buying a tree node can never lower the player's multiplier.
   cps *= ascendMult() * legacyMult();
@@ -622,6 +673,7 @@ function click() {
   state.clicks++;
   earn(d.clickPower);
   checkAchievements();
+  dropMilk();
 }
 
 // ---------------------------------------------------------------- tick
@@ -634,6 +686,10 @@ function tick() {
   state.played = Math.min((state.played || 0) + dt, CEIL);
   calc();
   checkAchievements();
+  graphSample();
+  // Golden cookies spawn per tick, so a backgrounded tab ticking once a minute would
+  // eat the intended one-per-three-minutes rate. Gate on visibility.
+  if (document.visibilityState === 'visible' && Math.random() < GOLDEN_CHANCE) spawnGolden();
   // Passive income goes through earn(). Crediting state.coins directly would leave
   // runEarned and totalEarned untouched, which zeroes out Ascend points and makes
   // u_g6's totalEarned >= 1e7 unlock permanently unreachable.
@@ -682,6 +738,7 @@ function buildBuildingsUI() {
       `<div class="bline2"><span class="bcost num"></span>` +
       `<button class="bbuy" type="button"></button><span class="bmax">MAX</span></div>`;
     row.querySelector('.bbuy').addEventListener('click', () => buyBuilding(i));
+    row.title = b.lore;
     host.append(row);
     ui2.rows.push({
       own: row.querySelector('.bown'),
@@ -869,9 +926,14 @@ function render() {
   paintTree();
   paintPrestige();
   paintLegacy();
+  paintParity();
   // Stats shows live numbers, so refresh it while open. The other panels are static
   // between unlocks and only rebuild when opened.
-  if (ovlName === 'stats') $('statbody').innerHTML = statsBody();
+  if (ovlName === 'stats') {
+    $('statbody') && ($('statbody').innerHTML = statsBody());
+    const a = $('gcoins'), b = $('gcps');
+    if (a && b) { drawGraph(a, rt.gCoins); drawGraph(b, rt.gCps); }
+  }
 }
 
 // ---------------------------------------------------------------- ascend
@@ -1028,6 +1090,102 @@ function buyNode(id) {
   paintTree();
 }
 
+// ---------------------------------------------------------------- CC parity
+const MILK_STEPS = [0, 1, 2, 3, 5, 8, 13, 21, 34];   // thresholds for ranks 0..8
+const MILK_DROP = 0.01;                               // per click
+const SEASON_COST = 0.015;                           // of lifetime earned
+const SEASON_MS = 15 * 60 * 1000;
+const SEASON_MAX = 3;
+const SEASON_MULT = 7;
+const GOLDEN_CHANCE = 0.0015;                        // per tick, about one per 3 min
+const GOLDEN_MS = 15000;
+const FRENZY_MS = 15000;
+const FRENZY_MULT = 7;
+
+const milkRank = () => { let r = 0; for (let i = 0; i < MILK_STEPS.length; i++) if (state.milk.progress >= MILK_STEPS[i]) r = i; return r; };
+const milkMult = () => Math.pow(1.05, milkRank());
+const activeSeasons = () => state.seasons.filter(s => s.expiresAt > Date.now()).length;
+const seasonMult = () => Math.pow(SEASON_MULT, activeSeasons());
+const frenzyOn = () => (rt.frenzyUntil || 0) > performance.now();
+const cpsBoostOn = () => (rt.cpsUntil || 0) > performance.now();
+const cpsBoostMult = () => (cpsBoostOn() ? 2 : 1);
+
+function dropMilk() {
+  if (Math.random() >= MILK_DROP) return;
+  const amt = 0.02 / (1 + 0.5 * milkRank());
+  state.milk.progress = Math.min(state.milk.progress + amt, MILK_STEPS[MILK_STEPS.length - 1]);
+  state.milk.lifetime += amt;
+}
+
+// Drinking trades the rank back for ascend points. Progress resets, so the ladder has
+// to be climbed again -- same trade as CC.
+function drinkMilk() {
+  const rank = milkRank();
+  if (rank < 1) return;
+  const bonus = Math.floor(state.ascend.earned * 0.1);
+  state.milk.progress = 0;
+  state.ascend.points += bonus;
+  save();
+  if (ovlName === 'stats') $('statbody').innerHTML = statsBody();
+  toast(`Drank the milk. Rank reset, +${fmt(bonus)} ascend points.`, 'good', 6000);
+}
+
+const seasonCost = () => Math.floor(state.totalEarned * SEASON_COST);
+function buySeason() {
+  if (state.seasons.length >= SEASON_MAX) return;
+  const c = seasonCost();
+  if (c > state.coins) return;
+  // Spending coins here must not count as earned, or a season would pay for itself.
+  state.coins -= c;
+  state.seasons.push({ expiresAt: Date.now() + SEASON_MS });
+  toast(`Season active — ×${SEASON_MULT} for 15 minutes.`, 'good', 5000);
+}
+
+const GOLDEN_PRIZES = [
+  { w: 20, label: 'Click frenzy: ×7 click for 15s', run: () => { rt.frenzyUntil = performance.now() + FRENZY_MS; } },
+  { w: 25, label: 'A free building', run: () => {
+      const open = BUILDINGS.map((b, i) => i).filter(i => state.buildings[i] < CAP);
+      if (open.length) { const i = open[Math.floor(Math.random() * open.length)]; state.buildings[i]++; }
+    } },
+  { w: 25, label: 'A free upgrade', run: () => {
+      // Drawn from what is actually unlocked and unbought, never from the hidden pool.
+      const open = visibleUpgrades();
+      if (open.length) buyUpgrade(open[Math.floor(Math.random() * open.length)]);
+    } },
+  { w: 15, label: '3 minutes of production', run: () => { state.coins = Math.min(state.coins + d.cps * 180, CEIL); } },
+  { w: 15, label: '×2 cps for 30s', run: () => { rt.cpsUntil = performance.now() + 30000; } },
+];
+
+function spawnGolden() {
+  const host = $('goldens');
+  if (!host || host.firstChild) return;                 // one on screen, maximum
+  const el = document.createElement('button');
+  el.type = 'button';
+  el.className = 'gcookie';
+  el.textContent = '💰';
+  el.setAttribute('aria-label', 'Golden cookie');
+  const w = Math.max(1, host.clientWidth - 34), h = Math.max(1, host.clientHeight - 34);
+  el.style.left = Math.random() * w + 'px';
+  el.style.top = Math.random() * h + 'px';
+  el.addEventListener('pointerdown', e => {
+    e.stopPropagation();
+    el.remove();
+    let r = Math.random() * 100, pick = GOLDEN_PRIZES[0];
+    for (const p of GOLDEN_PRIZES) { if (r < p.w) { pick = p; break; } r -= p.w; }
+    try { pick.run(); } catch {}
+    toast(pick.label, 'good', 5000);
+  });
+  host.append(el);
+  const born = performance.now();
+  (function fade() {
+    if (!el.parentNode) return;
+    const age = performance.now() - born;
+    if (age > GOLDEN_MS - 3000) el.classList.add('fade');
+    if (age < GOLDEN_MS) requestAnimationFrame(fade);
+    else el.remove();
+  })();
+}
+
 // ---------------------------------------------------------------- achievements
 // Multiplier rewards multiply together; point rewards go straight into the spendable
 // pool. All ten multiplier rewards maxed gives x12.82, not the x24 first assumed.
@@ -1063,6 +1221,143 @@ function checkAchievements() {
   }
 }
 
+// ---------------------------------------------------------------- graphs
+// Ring buffers live in rt and are never saved: a graph that empties on reload is fine,
+// persisting it would grow the save for no benefit.
+const GRAPH_N = 2400;                          // 10 minutes at one sample per tick
+rt.gCoins = new Float64Array(GRAPH_N);
+rt.gCps = new Float64Array(GRAPH_N);
+rt.gI = 0;
+
+function graphSample() {
+  rt.gCoins[rt.gI] = state.coins;
+  rt.gCps[rt.gI] = d.cps;
+  rt.gI = (rt.gI + 1) % GRAPH_N;
+}
+
+function drawGraph(canvas, arr) {
+  const w = canvas.width, h = canvas.height;
+  const ctx = canvas.getContext('2d');
+  if (!ctx) return;
+  ctx.clearRect(0, 0, w, h);
+  let max = 1;
+  for (let i = 0; i < GRAPH_N; i++) if (arr[i] > max) max = arr[i];
+  // Log scale is mandatory: the range spans orders of magnitude and a linear axis
+  // renders the whole game as a flat line pinned to zero.
+  const lmax = Math.log10(max + 1), n = Math.min(rt.gI || GRAPH_N, GRAPH_N);
+  const start = rt.gI < GRAPH_N ? 0 : rt.gI;
+  ctx.beginPath();
+  for (let k = 0; k < n; k++) {
+    const v = arr[(start + k) % GRAPH_N];
+    const x = k / (GRAPH_N - 1) * w;
+    const y = h - (Math.log10(v + 1) / lmax) * (h - 2) - 1;
+    k ? ctx.lineTo(x, y) : ctx.moveTo(x, y);
+  }
+  ctx.strokeStyle = graphInk();
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+}
+
+// getComputedStyle forces a style recalc. Two graphs redrawing every frame would pay
+// for that 60 times a second, so the ink colour is cached and only re-read on theme change.
+let inkCache = '';
+function graphInk() {
+  if (inkCache) return inkCache;
+  const v = getComputedStyle(document.documentElement).getPropertyValue('--accent');
+  inkCache = (v || '#ffffff').trim();
+  return inkCache;
+}
+
+function paintParity() {
+  const rank = milkRank();
+  const nextStep = rank + 1 < MILK_STEPS.length ? MILK_STEPS[rank + 1] : MILK_STEPS[MILK_STEPS.length - 1];
+  const prevStep = MILK_STEPS[rank];
+  const span = Math.max(1e-6, nextStep - prevStep);
+  $('milkbar').firstElementChild.style.width = Math.min(100, (state.milk.progress - prevStep) / span * 100).toFixed(1) + '%';
+  $('milktip').textContent = rank >= MILK_STEPS.length - 1 ? 'MILK MAX' : `MILK ${rank} · ×${milkMult().toFixed(2)}`;
+  $('milkbar').hidden = rank < 1 && state.milk.progress <= 0;
+
+  const live = activeSeasons();
+  $('seaslab').textContent = live
+    ? `Season ×${seasonMult()} — ${Math.ceil((Math.max(...state.seasons.map(s => s.expiresAt)) - Date.now()) / 1000)}s left`
+    : `Season ×${SEASON_MULT} for 15m — ${fmt(seasonCost())}`;
+  $('buyseason').disabled = state.seasons.length >= SEASON_MAX || seasonCost() > state.coins;
+  $('buyseason').textContent = state.seasons.length >= SEASON_MAX ? 'Maxed' : 'Season';
+}
+
+// ---------------------------------------------------------------- easter eggs
+const KONAMI = ['ArrowUp','ArrowUp','ArrowDown','ArrowDown','ArrowLeft','ArrowRight','ArrowLeft','ArrowRight','b','a'];
+let eggBuf = [], eggChars = '';
+function checkEggs(e) {
+  eggBuf.push(e.key); if (eggBuf.length > KONAMI.length) eggBuf.shift();
+  if (eggBuf.join('|') === KONAMI.join('|')) { eggBuf = []; openConsole(); toast('You found the developer console.', 'good', 6000); }
+
+  if (e.target && /^(INPUT|TEXTAREA|SELECT)$/.test(e.target.tagName)) return;
+  eggChars = (eggChars + e.key).slice(-10);
+  if (eggChars.toLowerCase() === 'rambo') {
+    eggChars = '';
+    document.title = 'RAMBO FINANCIAL';
+    toast('rambo', 'good', 3000);
+    setTimeout(() => { document.title = 'RAMBO CLICKER'; }, 10000);
+  }
+}
+
+// 50 clicks on the bill inside 2 seconds.
+let fast = [];
+function checkFrenzyClicks() {
+  const t = performance.now();
+  fast.push(t);
+  while (fast.length && t - fast[0] > 2000) fast.shift();
+  if (fast.length >= 50) {
+    fast = [];
+    spawnGolden();
+    toast('HACKING', 'warn', 4000);
+  }
+}
+
+// ---------------------------------------------------------------- debug console
+const CONSOLE_HELP = [
+  'add [n]     grant coins (not counted as earned)',
+  'build [n]   grant n units of a random building, up to the 1000 cap',
+  'milk [n]    set milk rank (0-8)',
+  'season      grant a free 15-minute season',
+  'golden      spawn a golden cookie now',
+  'ascend      trigger an Ascend',
+  'legacy      trigger a Legacy',
+  'fill        max every tree node, perk, upgrade and achievement',
+  'reset       hard reset, same as Preferences',
+  'help        this list',
+];
+function runConsole(line) {
+  const [cmd, arg] = line.trim().split(/\s+/);
+  const n = Number(arg);
+  switch ((cmd || '').toLowerCase()) {
+    case 'add': state.coins = Math.min(state.coins + (isFinite(n) ? n : 1e9), CEIL); return `+${fmt(isFinite(n) ? n : 1e9)} coins`;
+    case 'build': {
+      const k = Math.max(1, Math.min(isFinite(n) ? n : 10, CAP));
+      const open = BUILDINGS.map((b, i) => i).filter(i => state.buildings[i] < CAP);
+      if (!open.length) return 'every building is capped';
+      const i = open[Math.floor(Math.random() * open.length)];
+      state.buildings[i] = Math.min(CAP, state.buildings[i] + k);
+      return `+${k} ${BUILDINGS[i].label}`;
+    }
+    case 'milk': state.milk.progress = MILK_STEPS[Math.max(0, Math.min(8, isFinite(n) ? n : 8))]; return `milk rank ${milkRank()}`;
+    case 'season': state.seasons.push({ expiresAt: Date.now() + SEASON_MS }); return 'season granted';
+    case 'golden': spawnGolden(); return 'golden cookie spawned';
+    case 'ascend': doAscend(); return 'ascend attempted (needs runEarned >= 1e6)';
+    case 'legacy': doLegacy(); return 'legacy attempted (needs 3 ascends)';
+    case 'fill':
+      TREE.forEach(t => { state.tree[t.id] = t.max; });
+      PERKS.forEach(p => { state.perks[p.id] = p.max; });
+      UPGRADES.forEach(u => { if (u.unlock(state) && !has(u.id)) state.upgrades.push(u.id); });
+      ACHIEVEMENTS.forEach(a => { state.ach[a.id] = true; });
+      return 'everything filled';
+    case 'reset': store.del(KEY); location.reload(); return 'resetting';
+    case 'help': return CONSOLE_HELP.join('\n');
+    default: return 'unknown command. try "help"';
+  }
+}
+
 // ---------------------------------------------------------------- panels
 function statsBody() {
   const rows = [
@@ -1082,9 +1377,15 @@ function statsBody() {
     ['Skill tree', `${TREE.reduce((a,n)=>a+treeRank(n.id),0)} / ${TREE_TOTAL}`],
     ['Legacy perks', `${PERKS.reduce((a,p)=>a+perkRank(p.id),0)} / ${PERKS_TOTAL}`],
     ['Achievements', `${achUnlocked()} / ${ACHIEVEMENTS.length} · ×${achBonus().toFixed(2)}`],
+    ['Milk', `rank ${milkRank()} · ×${milkMult().toFixed(2)} · ${state.milk.lifetime.toFixed(2)} lifetime`],
+    ['Seasons', `${state.seasons.length}/3 active · ×${seasonMult()}`],
   ];
-  return rows.map(([k, v]) =>
+  let html = rows.map(([k, v]) =>
     `<div class="statrow"><span class="k">${k}</span><span class="v">${v}</span></div>`).join('');
+  if (milkRank() >= 1) html += '<div class="ovlrow"><label>Drink the milk' +
+    `<span class="hint">Resets rank ${milkRank()} to 0 for ${fmt(Math.floor(state.ascend.earned * 0.1))} ascend points</span>` +
+    '</label><button class="btn" id="drink" type="button">Drink</button></div>';
+  return html;
 }
 
 function achBody() {
@@ -1217,7 +1518,10 @@ function applyOffline() {
 }
 
 // ---------------------------------------------------------------- preferences
-const applyTheme = () => { document.documentElement.dataset.theme = state.ui.theme; };
+const applyTheme = () => {
+  document.documentElement.dataset.theme = state.ui.theme;
+  inkCache = '';            // the graphs read --accent, so drop the cached value
+};
 const THEMES = ['neon', 'matrix', 'mono'];
 
 function exportSave() {
@@ -1246,6 +1550,8 @@ function importSave(file) {
 }
 
 function wirePrefs() {
+  const drink = $('drink');
+  if (drink) drink.addEventListener('click', drinkMilk);
   $('ptheme').addEventListener('change', e => {
     state.ui.theme = e.target.value;
     applyTheme();
@@ -1285,13 +1591,46 @@ function openOvl(name) {
   } else if (name === 'ach') {
     $('ovlbody').innerHTML = '<div class="agrid">' + achBody() + '</div>';
   } else {
-    $('ovlbody').innerHTML = '<div id="statbody">' + statsBody() + '</div>';
+    $('ovlbody').innerHTML = '<div id="statbody">' + statsBody() + '</div>' +
+      '<div class="graph"><div class="glab">Cookies and cps, last 10 minutes (log)</div>' +
+      '<canvas id="gcoins" width="520" height="54"></canvas>' +
+      '<div class="glab" style="margin-top:6px">Production rate</div>' +
+      '<canvas id="gcps" width="520" height="54"></canvas></div>';
+    setTimeout(() => {
+      const a = $('gcoins'), b = $('gcps');
+      if (!a || !b) return;
+      drawGraph(a, rt.gCoins);
+      drawGraph(b, rt.gCps);
+    }, 0);
   }
   $('ovltitle').textContent = titles[name] || 'Preferences';
   ovlName = name;
   $('ovl').hidden = false;
 }
 function closeOvl() { $('ovl').hidden = true; ovlName = null; }
+
+function openConsole() {
+  $('ovl').hidden = false;
+  ovlName = 'console';
+  $('ovltitle').textContent = 'Console';
+  $('ovlbody').innerHTML =
+    '<div class="console"><input class="btn" id="cin" style="width:100%" ' +
+    'placeholder="type a command, then Enter" aria-label="Console command">' +
+    '<div class="out" id="cout">'+ CONSOLE_HELP.map(l=>'  '+l).join('\n') +'</div></div>';
+  const input = $('cin');
+  const out = $('cout');
+  const say = t => { out.textContent += '\n> ' + t; out.scrollTop = out.scrollHeight; };
+  input.addEventListener('keydown', e => {
+    if (e.key !== 'Enter') return;
+    const line = input.value.trim();
+    input.value = '';
+    if (!line) return;
+    say(line);
+    try { say(runConsole(line)); } catch (err) { say('error: ' + err.message); }
+    calc(); render(); save();
+  });
+  input.focus();
+}
 
 // ---------------------------------------------------------------- boot
 function boot() {
@@ -1305,20 +1644,23 @@ function boot() {
   buildLegacyUI();
   const bill = $('bill');
   bill.textContent = 'CLICK';
-  bill.addEventListener('pointerdown', e => { e.preventDefault(); click(); });
+  bill.addEventListener('pointerdown', e => { e.preventDefault(); click(); checkFrenzyClicks(); });
   bill.addEventListener('keydown', e => {
-    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); click(); }
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); click(); checkFrenzyClicks(); }
   });
   document.querySelectorAll('.tabs button').forEach(b => {
     b.removeAttribute('aria-disabled');
     b.addEventListener('click', () => openOvl(b.dataset.panel));
   });
   $('ovlclose').addEventListener('click', closeOvl);
+  $('buyseason').addEventListener('click', buySeason);
   $('ascend').addEventListener('click', doAscend);
   $('legacybtn').addEventListener('click', doLegacy);
   $('ovl').addEventListener('click', e => { if (e.target === $('ovl')) closeOvl(); });
   window.addEventListener('keydown', e => {
     if (e.key === 'Escape' && !$('ovl').hidden) { closeOvl(); return; }
+    if (e.key === '/' && e.shiftKey) { e.preventDefault(); openConsole(); return; }
+    checkEggs(e);
     if (e.target !== document.body) return;
     if (e.key === ' ') { e.preventDefault(); click(); return; }
     // 1/2/3 set the buy selector to 1/10/100.
