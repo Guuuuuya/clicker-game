@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="neon">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>RAMBO CLICKER</title>
+<style>
+:root{
+  --font: ui-monospace, "Cascadia Mono", "JetBrains Mono", Consolas, monospace;
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:32px; --s7:48px;
+  --glow: 0 0 8px color-mix(in srgb, var(--accent) 55%, transparent);
+  --bg:#0a0612; --panel:#150c26; --panel2:#1e1136; --line:#3b2566;
+  --text:#e8e2ff; --dim:#9d8ec4; --accent:#b14dff; --accent2:#00e5ff;
+  --gold:#ffcc4d; --good:#3dffa8; --bad:#ff4d6d;
+}
+[data-theme="matrix"]{
+  --bg:#04100a; --panel:#071a10; --panel2:#0b2416; --line:#1d5c33;
+  --text:#d6ffe4; --dim:#6fbf87; --accent:#39ff88; --accent2:#00ffd5;
+  --gold:#e6ff5c; --good:#39ff88; --bad:#ff5566;
+}
+[data-theme="mono"]{
+  --bg:#0b0b0b; --panel:#141414; --panel2:#1c1c1c; --line:#3a3a3a;
+  --text:#f2f2f2; --dim:#8a8a8a; --accent:#ffffff; --accent2:#c8c8c8;
+  --gold:#f5c518; --good:#7ddc7d; --bad:#e05c5c;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{
+  margin:0; background:var(--bg); color:var(--text); font-family:var(--font);
+  font-size:15px; line-height:1.45; font-variant-numeric:tabular-nums;
+}
+button{font:inherit; color:inherit}
+.num{font-variant-numeric:tabular-nums}
+
+/* ---- header ---- */
+header{padding:var(--s4) var(--s5) var(--s3)}
+.hrow{display:flex; align-items:center; gap:var(--s5)}
+.bal{font-size:40px; line-height:1.1; color:var(--accent); text-shadow:var(--glow)}
+.bal .unit{font-size:18px; color:var(--dim)}
+.cps{font-size:24px; color:var(--accent2)}
+.cps .unit{font-size:13px; color:var(--dim)}
+.sub{
+  margin-top:var(--s2); font-size:12px; color:var(--dim); display:flex; gap:var(--s4);
+  flex-wrap:wrap;
+}
+.tabs{margin-left:auto; display:flex; flex-direction:column; gap:var(--s1)}
+.tabs button{
+  width:34px; height:34px; background:var(--panel2); border:1px solid var(--line);
+  border-radius:6px; cursor:pointer; font-size:15px; opacity:.6;
+}
+
+/* ---- layout ---- */
+main{
+  display:grid; gap:var(--s3); padding:0 var(--s5) var(--s5);
+  grid-template-columns:300px 84px 1fr 300px; align-items:start;
+}
+.col{display:flex; flex-direction:column; gap:var(--s2)}
+.center{display:flex; flex-direction:column; align-items:center; gap:var(--s4)}
+h2{
+  margin:0 0 var(--s2); font-size:13px; letter-spacing:.14em; text-transform:uppercase;
+  color:var(--dim); font-weight:400;
+}
+.panel{
+  background:var(--panel); border:1px solid var(--line); border-radius:10px;
+  padding:var(--s3);
+}
+.empty{font-size:12px; color:var(--dim)}
+
+/* ---- click target (canvas bill lands in step 10) ---- */
+#bill{
+  width:240px; height:120px; border-radius:8px; cursor:pointer; user-select:none;
+  display:flex; align-items:center; justify-content:center;
+  font-size:15px; letter-spacing:.2em; color:#e9fff0;
+  background:linear-gradient(#2f7d4f,#1f5c39);
+  border:3px solid #14402a; box-shadow:inset 0 0 0 6px #8fd6a833, inset 0 0 0 10px #8fd6a859;
+}
+#bill:active{transform:translateY(1px)}
+#prestige{width:100%; max-width:420px}
+@media (prefers-reduced-motion: reduce){ #bill:active{transform:none} }
+
+@media (max-width:1200px){
+  main{grid-template-columns:300px 1fr 300px}
+  #upgrades{grid-column:1; grid-row:2; flex-direction:row}
+  #buildings{grid-column:1; grid-row:1}
+  .center{grid-column:2; grid-row:1 / span 2}
+  #tree{grid-column:3; grid-row:1 / span 2}
+}
+@media (max-width:900px){
+  main{grid-template-columns:1fr; padding:0 var(--s3) var(--s5)}
+  #buildings,#upgrades,.center,#tree{grid-column:1; grid-row:auto}
+  #tree{min-width:240px; overflow-x:auto}
+  header{padding:var(--s3)}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="hrow">
+    <div class="bal"><span id="bal" aria-live="polite">0</span> <span class="unit">cookies</span></div>
+    <div class="cps"><span id="cps">0</span> <span class="unit">per second</span></div>
+    <nav class="tabs">
+      <button type="button" data-panel="stats" title="Stats" aria-disabled="true">&#128202;</button>
+      <button type="button" data-panel="ach" title="Achievements" aria-disabled="true">&#127942;</button>
+      <button type="button" data-panel="prefs" title="Preferences" aria-disabled="true">&#9881;</button>
+    </nav>
+  </div>
+  <div class="sub" id="sub"></div>
+</header>
+
+<main>
+  <section id="buildings" class="col panel">
+    <h2>Buildings</h2>
+    <p class="empty">Step 2.</p>
+  </section>
+
+  <section id="upgrades" class="col panel">
+    <h2>Upgrades</h2>
+  </section>
+
+  <div class="center">
+    <div id="bill" role="button" tabindex="0" aria-label="Click the bill to earn cookies"></div>
+    <section id="prestige" class="panel">
+      <h2>Prestige</h2>
+      <p class="empty">Step 5.</p>
+    </section>
+  </div>
+
+  <section id="tree" class="col panel">
+    <h2>Skill Tree</h2>
+    <p class="empty">Step 6.</p>
+  </section>
+</main>
+
+<script>
+'use strict';
+
+// ---------------------------------------------------------------- state
+const KEY = 'clicker.v1';
+const CEIL = Number.MAX_VALUE / 1e6;   // global finite ceiling, applied at accumulation
+
+const DEFAULTS = {
+  coins: 0, clicks: 0,
+  totalEarned: 0, runEarned: 0, legacyEarned: 0,
+  buildings: [0, 0, 0, 0, 0, 0],
+  upgrades: [],
+  ascend: { runs: 0, points: 0, earned: 0 },
+  legacy: { runs: 0, points: 0, earned: 0 },
+  tree: {}, perks: {}, ach: {},
+  milk: { progress: 0, rank: 0, lifetime: 0 },
+  seasons: [],
+  ui: { theme: 'neon', muted: false, buyAmount: 1, bannerDismissed: false, persistent: true },
+  lastSave: 0,
+};
+
+const state = structuredClone(DEFAULTS);
+
+// Runtime-only. Never persisted: anything a reload could reset for free lives here.
+const rt = { last: 0, idleMs: 0, lastClick: 0, investAcc: 0, offlineEarned: 0 };
+
+const $ = id => document.getElementById(id);
+const clamp = (v, lo, hi) => v < lo ? lo : v > hi ? hi : v;
+
+// ---------------------------------------------------------------- formatter
+const SUF = ['', 'K', 'M', 'B', 'T', 'Qa', 'Qi', 'Sx', 'Sp', 'Oc', 'No', 'Dc', 'Ud', 'Dd', 'Td'];
+function fmt(v) {
+  if (!isFinite(v)) return '∞';
+  if (v < 1000)  return String(v < 10 ? +v.toFixed(2) : Math.floor(v));
+  if (v < 1e6)   return Math.floor(v).toLocaleString('en-US');
+  let i = 0, n = v;
+  while (n >= 1000 && i < SUF.length - 1) { n /= 1000; i++; }
+  if (n >= 999.5 && i < SUF.length - 1) { n /= 1000; i++; }
+  return (n < 10 ? n.toFixed(2) : n < 100 ? n.toFixed(1) : Math.floor(n)) + SUF[i];
+}
+
+// ---------------------------------------------------------------- derived (never stored)
+const d = { cps: 0, clickPower: 1 };
+function calc() {
+  d.cps = 0;          // no buildings until step 2
+  d.clickPower = 1;   // no upgrades, tree or perks yet
+}
+
+// ---------------------------------------------------------------- economy
+// Earned coins: they count toward prestige. Injected coins (E3, golden cookies,
+// the 3-minutes-of-cps reward) must NOT come through here.
+function earn(n) {
+  if (!(n > 0)) return;
+  state.coins = Math.min(state.coins + n, CEIL);
+  state.runEarned = Math.min(state.runEarned + n, CEIL);
+  state.totalEarned = Math.min(state.totalEarned + n, CEIL);
+}
+
+function click() {
+  const now = performance.now();
+  rt.lastClick = now;
+  rt.idleMs = 0;
+  state.clicks++;
+  earn(d.clickPower);
+}
+
+// ---------------------------------------------------------------- tick
+function tick() {
+  const now = performance.now();
+  // 60s upper bound, not 1s: hidden tabs get throttled to ~1 tick/min.
+  const dt = clamp(now - rt.last, 0, 60000);
+  rt.last = now;
+  rt.idleMs += dt;
+  state.coins = Math.min(state.coins + d.cps * dt / 1000, CEIL);
+}
+
+// ---------------------------------------------------------------- render
+function render() {
+  $('bal').textContent = fmt(state.coins);
+  $('cps').textContent = fmt(d.cps);
+  $('sub').textContent =
+    `${fmt(state.runEarned)} run · ×${(1 + 0.15 * state.ascend.earned).toFixed(1)} ascend · ` +
+    `×${(1 + 0.25 * state.legacy.earned).toFixed(1)} legacy · ` +
+    `${fmt(state.ascend.points)} pts · ${fmt(state.legacy.points)} legacy`;
+}
+
+// ---------------------------------------------------------------- boot
+function boot() {
+  calc();
+  rt.last = performance.now();
+  const bill = $('bill');
+  bill.textContent = 'CLICK';
+  bill.addEventListener('pointerdown', e => { e.preventDefault(); click(); });
+  bill.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); click(); }
+  });
+  window.addEventListener('keydown', e => {
+    if (e.key === ' ' && e.target === document.body) { e.preventDefault(); click(); }
+  });
+  // rAF is the fast path; the interval also renders, because rAF stops in occluded
+// windows and hidden tabs, and a stale balance is worse than two text writes.
+setInterval(() => { tick(); render(); }, 250);
+  (function frame() { render(); requestAnimationFrame(frame); })();
+}
+
+boot();
+</script>
+</body>
+</html>
