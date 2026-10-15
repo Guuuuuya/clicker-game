@@ -155,6 +155,7 @@ h2{
 .milkbar{
   height:8px; background:var(--panel2); border:1px solid var(--line); border-radius:6px;
   overflow:hidden; margin:var(--s1) 0; position:relative;
+  width:240px; max-width:100%;
 }
 .milkbar i{display:block; height:100%; width:0; background:#e9fff0}
 .milkbar b{
@@ -403,6 +404,7 @@ select.btn{padding-right:var(--s2)}
               aria-label="Click the bill to earn cookies"></canvas>
       <div id="pops" aria-hidden="true"></div>
     </div>
+    <div class="milkbar" id="milkbar"><i></i><b id="milktip"></b></div>
   </div>
 
   <!-- CENTRE: stacked panels, where CC puts its minigame views. -->
@@ -461,12 +463,11 @@ select.btn{padding-right:var(--s2)}
   <div class="right">
     <section id="store" class="panel">
       <h2>Store</h2>
-      <div class="uphead">Buy all upgrades</div>
+      <button class="uphead btn" id="buyall" type="button">Buy all upgrades</button>
       <div id="upgrades"></div>
       <div class="buysel" id="buysel" role="group" aria-label="Buy amount"></div>
       <div id="brows"></div>
       <div id="goldens"></div>
-      <div class="milkbar" id="milkbar"><i></i><b id="milktip"></b></div>
     </section>
   </div>
 
@@ -502,7 +503,7 @@ const DEFAULTS = {
   legacy: { runs: 0, points: 0, earned: 0 },
   tree: {}, perks: {}, ach: {},
   milk: { progress: 0, rank: 0, lifetime: 0 },
-  ui: { theme: 'neon', muted: false, buyAmount: 1, bannerDismissed: false, persistent: true },
+  ui: { theme: 'neon', muted: false, buyAmount: 1, bannerDismissed: false, persistent: true, bankName: 'Rambo Bank' },
   played: 0,
   lastSave: 0,
 };
@@ -657,11 +658,27 @@ const visibleUpgrades = () =>
 
 function buyUpgrade(u) {
   const cost = unlockCost(u);
-  if (has(u.id) || !isFinite(cost) || cost > state.coins) return;
+  if (has(u.id) || !isFinite(cost) || cost > state.coins) return false;
   state.coins -= cost;
   state.upgrades.push(u.id);
   sfx('upgrade');
   render();   // the icon goes now, not on the next tick
+  return true;
+}
+
+// Buys every unlocked upgrade it can afford, cheapest first so a partial balance goes to
+// the things that unlock the most. Re-reads the list each pass because buying one can
+// unlock the next (u_g5 needs cps >= 1e6, which an earlier buy may push it over).
+function buyAllUpgrades() {
+  let bought = 0;
+  for (;;) {
+    const open = visibleUpgrades().filter(u => unlockCost(u) <= state.coins);
+    if (!open.length) break;
+    if (!buyUpgrade(open[0])) break;
+    bought++;
+    if (bought > 200) break;   // pathological guard; there are ~50 upgrades
+  }
+  return bought;
 }
 
 // Coin-cost discount, shared by buildings and upgrades. L1 (step 7) extends this.
@@ -1117,6 +1134,9 @@ function applyCompletion() {
 function render() {
   // The bank balance is the headline number, as in CC. Total earned is a statistic, not
   // the thing you look at, so it lives in the Stats panel rather than the left stack.
+  // The bank name is a saved preference, so it is applied at boot and whenever it changes.
+  // Guarded because older saves have no ui.bankName.
+  $('bakery').textContent = state.ui.bankName || DEFAULTS.ui.bankName;
   $('bal').textContent = fmt(state.coins);
   $('cps').textContent = fmt(d.cps);
   $('sub').textContent =
@@ -2052,6 +2072,15 @@ function wirePrefs() {
     applyTheme();
     save();
   });
+  const bank = $('ptbank');
+  bank.addEventListener('input', e => {
+    const v = e.target.value.trim().slice(0, 28);
+    state.ui.bankName = v || DEFAULTS.ui.bankName;
+    $('bakery').textContent = state.ui.bankName;
+  });
+  // Commit on close so a half-typed name does not get saved by an unrelated save tick.
+  bank.addEventListener('change', () => save());
+  bank.addEventListener('blur', () => { bank.value = state.ui.bankName; });
   $('ptmute').addEventListener('change', e => { state.ui.muted = !e.target.checked; save(); });
   $('ptexp').addEventListener('click', exportSave);
   $('ptimp').addEventListener('click', () => $('ptfile').click());
@@ -2077,6 +2106,9 @@ function openOvl(name) {
         '<select class="btn" id="ptheme">' +
           THEMES.map(t => `<option value="${t}"${state.ui.theme === t ? ' selected' : ''}>${t}</option>`).join('') +
         '</select></div>' +
+      '<div class="ovlrow"><label for="ptbank">Bank name' +
+        `<span class="hint">Shown above your balance</span></label>` +
+        `<input class="btn" id="ptbank" maxlength="28" value="${String(state.ui.bankName || DEFAULTS.ui.bankName).replace(/"/g, '&quot;')}"></div>` +
       '<div class="ovlrow"><label for="ptmute">Sound' +
         `<span class="hint">WebAudio blips, no audio files</span></label>` +
         '<input type="checkbox" id="ptmute"' + (state.ui.muted ? '' : ' checked') + '></div>' +
@@ -2150,6 +2182,11 @@ function boot() {
   $('ovlclose').addEventListener('click', closeOvl);
   $('ascend').addEventListener('click', doAscend);
   $('legacybtn').addEventListener('click', doLegacy);
+  $('buyall').addEventListener('click', () => {
+    const n = buyAllUpgrades();
+    toast(n ? `Bought ${n} upgrade${n > 1 ? 's' : ''}.` : 'Nothing affordable yet.',
+      n ? 'good' : '', 2600);
+  });
   $('ovl').addEventListener('click', e => { if (e.target === $('ovl')) closeOvl(); });
   window.addEventListener('keydown', e => {
     if (e.key === 'Escape' && !$('ovl').hidden) { closeOvl(); return; }
