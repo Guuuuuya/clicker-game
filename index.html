@@ -208,6 +208,39 @@ h2{
 }
 .pgrid{display:grid; grid-template-columns:1fr 1fr; gap:var(--s1); margin-top:var(--s1)}
 
+/* ---- skill tree: a real tree, in its own overlay (step 11) ---- */
+.tsvg{width:100%; height:auto; display:block}
+.thead{fill:var(--dim); font-size:11px; text-anchor:middle; letter-spacing:.1em}
+.tlink{stroke:var(--line); stroke-width:2}
+.tlink.req{stroke:var(--accent); stroke-opacity:.45; stroke-dasharray:4 3}
+.tnode rect{fill:var(--panel2); stroke:var(--line); stroke-width:1; cursor:pointer}
+.tnode:hover rect{stroke:var(--accent); stroke-width:2}
+.tnode.owned rect{stroke:var(--accent); stroke-width:2; fill:color-mix(in srgb,var(--accent) 12%,var(--panel2))}
+.tnode.maxed rect{stroke:var(--good); fill:color-mix(in srgb,var(--good) 16%,var(--panel2))}
+.tnode.locked{opacity:.32; cursor:not-allowed}
+.tnode.star.owned rect{stroke:var(--gold); fill:color-mix(in srgb,var(--gold) 14%,var(--panel2))}
+.tn{fill:var(--text); font-size:12px; font-weight:600}
+.tp{fill:var(--accent2); font-size:10px; letter-spacing:1px}
+.td{fill:var(--dim); font-size:10px}
+.td.poor{fill:var(--bad)}
+
+/* ---- centre band information panels (step 11) ---- */
+.bar{display:flex; align-items:center; gap:var(--s2); margin-top:var(--s2)}
+.bar .bl{width:64px; font-size:12px; color:var(--dim); flex-shrink:0}
+.bar .bt{flex:1; height:12px; background:var(--panel2); border-radius:6px; overflow:hidden}
+.bar .bt i{display:block; height:100%; background:var(--accent); width:0}
+.bar .bv{width:74px; text-align:right; font-size:12px; color:var(--text); font-variant-numeric:tabular-nums}
+.owngrid{display:flex; flex-wrap:wrap; gap:var(--s1); margin-top:var(--s2)}
+.owngrid .oico{
+  width:34px; height:34px; display:flex; align-items:center; justify-content:center;
+  font-size:18px; background:var(--panel2); border:1px solid var(--line); border-radius:6px;
+}
+.achprog{display:flex; align-items:center; gap:var(--s3); margin-top:var(--s2)}
+.achbar{flex:1; height:10px; background:var(--panel2); border-radius:6px; overflow:hidden}
+.achbar i{display:block; height:100%; background:var(--good); width:0; transition:width .3s}
+.achprog span{font-size:12px; color:var(--dim); min-width:120px}
+@media (prefers-reduced-motion: reduce){ .achbar i{transition:none} }
+
 /* ---- skill tree (step 6) ---- */
 .tbranch{
   font-size:11px; letter-spacing:.12em; color:var(--dim); text-transform:uppercase;
@@ -351,6 +384,7 @@ select.btn{padding-right:var(--s2)}
       <button type="button" data-panel="prefs">Options</button>
       <button type="button" data-panel="stats">Stats</button>
       <button type="button" data-panel="ach">Achievements</button>
+      <button type="button" data-panel="tree">Skill Tree</button>
     </nav>
     <div class="balstack">
       <div class="bakery" id="bakery">Rambo Bank</div>
@@ -380,18 +414,35 @@ select.btn{padding-right:var(--s2)}
       <div id="banners"></div>
     </section>
 
-    <section id="tree" class="panel">
-      <h2>Skill Tree</h2>
-      <div id="tbody"></div>
-      <div class="tpoints" id="tpoints"></div>
-      <section id="legacy" hidden>
-        <div class="lhead">⟳ Legacy</div>
-        <div class="lrow"><span class="pgain" id="lgain"></span></div>
-        <div class="lrow"><button class="bbtn" id="legacybtn" type="button">Legacy</button></div>
-        <div class="lhead">Perks</div>
-        <div class="pgrid" id="pbody"></div>
-        <div class="tpoints" id="lpoints"></div>
-      </section>
+    <section id="legacy" class="panel">
+      <h2>Legacy</h2>
+      <div class="lrow"><span class="pgain" id="lgain"></span></div>
+      <div class="lrow"><button class="bbtn" id="legacybtn" type="button">Legacy</button></div>
+      <div class="lhead">Perks</div>
+      <div class="pgrid" id="pbody"></div>
+      <div class="tpoints" id="lpoints"></div>
+    </section>
+
+    <!-- Centre band: the information views, where CC puts its minigame panels. -->
+    <section id="econ" class="panel">
+      <h2>Production</h2>
+      <div id="bars"></div>
+    </section>
+
+    <section id="rate" class="panel">
+      <h2>Over time</h2>
+      <div class="graph"><canvas id="gcps2" width="720" height="90"></canvas></div>
+    </section>
+
+    <section id="owned" class="panel">
+      <h2>Upgrades owned</h2>
+      <div class="owngrid" id="owngrid"></div>
+      <p class="empty" id="ownempty">No upgrades yet.</p>
+    </section>
+
+    <section id="achpanel" class="panel">
+      <h2>Achievements</h2>
+      <div class="achprog"><div class="achbar"><i id="achfill"></i></div><span id="achlabel"></span></div>
     </section>
   </div>
 
@@ -404,10 +455,6 @@ select.btn{padding-right:var(--s2)}
       <div class="buysel" id="buysel" role="group" aria-label="Buy amount"></div>
       <div id="brows"></div>
       <div id="goldens"></div>
-      <div class="srow">
-        <span class="pgain" id="seaslab"></span>
-        <button class="btn" id="buyseason" type="button">Season</button>
-      </div>
       <div class="milkbar" id="milkbar"><i></i><b id="milktip"></b></div>
     </section>
   </div>
@@ -444,7 +491,6 @@ const DEFAULTS = {
   legacy: { runs: 0, points: 0, earned: 0 },
   tree: {}, perks: {}, ach: {},
   milk: { progress: 0, rank: 0, lifetime: 0 },
-  seasons: [],
   ui: { theme: 'neon', muted: false, buyAmount: 1, bannerDismissed: false, persistent: true },
   played: 0,
   lastSave: 0,
@@ -549,14 +595,17 @@ const BUILDINGS = [
 // Cost and output have to move together: if only the price went per-building, the
 // top tier's first unit would cost 5e6 flat while still collecting the whole base's
 // boost, and the economy would fall apart.
-const ESCALATE = 1.12;
+// Cost escalates per unit owned. Production does NOT.
+//
+// Cookie Clicker scales building COST by 1.15 per unit, but its production is FLAT per
+// unit: a Cursor always yields its base CpS, 100 Cursors yield 100x that flat amount.
+// The only thing that scales production is the global multiplier chain. There is no
+// per-unit production exponent in CC at all, and having one here is what made the
+// building layer exhaust itself in seven minutes.
+const COST_RATE = 1.15;
 const CAP = 1000;                       // hard cap per building
 const totalBuildings = () => state.buildings.reduce((a, b) => a + b, 0);
-// Total output of building i: every owned unit yields baseCps, and the whole building
-// escalates on its own count. The owned-count factor is load-bearing -- omit it and a
-// fresh game starts at 58,313 cps for free, the sum of all six baseCps values.
-const buildingCps = i =>
-  state.buildings[i] * BUILDINGS[i].baseCps * Math.pow(ESCALATE, state.buildings[i]);
+const buildingCps = i => BUILDINGS[i].baseCps;
 
 // ---------------------------------------------------------------- upgrades
 // Buildings and upgrades are separate systems with separate lifetimes. Upgrades
@@ -613,7 +662,7 @@ const discount = () => Math.max(
 
 // One shared exponent: every unit purchased raises every building's cost and output.
 const unitPrice = (i, extra) =>
-  Math.floor(BUILDINGS[i].baseCost * Math.pow(ESCALATE, state.buildings[i] + extra) * discount());
+  Math.floor(BUILDINGS[i].baseCost * Math.pow(COST_RATE, state.buildings[i] + extra) * discount());
 
 // Sum of individually floored unit prices. Never floor() the sum.
 function costOf(i, n) {
@@ -679,7 +728,8 @@ function clickPower() {
 function calc() {
   let cps = 0;
   for (let i = 0; i < BUILDINGS.length; i++) {
-    cps += buildingCps(i) * (has('u_b' + i) ? 3 : 1);
+    // Flat per unit: the owned count multiplies the base value, it does not compound.
+    cps += state.buildings[i] * buildingCps(i) * (has('u_b' + i) ? 3 : 1);
   }
   if (has('u_g2')) cps *= 1.5;
   if (has('u_g3')) cps *= 2;
@@ -695,13 +745,13 @@ function calc() {
   // caps at x5 so it cannot run away during a long absence.
   cps *= Math.pow(1.05, treeRank('A1')) * (1 + 0.2 * treeRank('A3'));
   cps *= idleMult();
-  cps *= milkMult() * seasonMult() * cpsBoostMult();
+  cps *= milkMult() * cpsBoostMult();
   // Prestige multipliers. They read `earned`, never the spendable `points` pool, so
   // buying a tree node can never lower the player's multiplier.
   cps *= ascendMult() * legacyMult();
   // L2 Legacy Engines compounds per rank.
   cps *= Math.pow(1.2, perkRank('L2'));
-  // Milk and seasons (step 9) fold in here.
+  // Milk folds in here.
   d.cps = Math.min(cps, CEIL);
   d.clickPower = Math.min(clickPower(), CEIL);
 }
@@ -772,7 +822,7 @@ function tick() {
 
 // ---------------------------------------------------------------- render
 const AMOUNTS = [['1', 1], ['10', 10], ['100', 100], ['MAX', 'max']];
-const ui2 = { rows: [], sel: [], ups: new Map(), upKey: '', chips: new Map(), perks: new Map() };
+const ui2 = { rows: [], sel: [], ups: new Map(), upKey: '', chips: new Map(), perks: new Map(), bars: [], tnodes: new Map() };
 
 function buildBuildingsUI() {
   const sel = $('buysel');
@@ -817,6 +867,10 @@ function buildBuildingsUI() {
 
 function paintBuildings() {
   for (const [k, b] of ui2.sel.entries()) b.setAttribute('aria-pressed', String(state.ui.buyAmount === AMOUNTS[k][1]));
+  // Buildings depend on the balance, which moves every frame -- so the signature uses
+  // coarse buckets of the two things that actually change a row: unit count and coins.
+  if (!changed('buildings', state.buildings.join(',') + '|' +
+      Math.floor(state.coins) + '|' + state.ui.buyAmount)) return;
   BUILDINGS.forEach((b, i) => {
     const el = ui2.rows[i];
     const n = state.buildings[i];
@@ -859,44 +913,84 @@ function paintUpgrades() {
   for (const u of list) ui2.ups.get(u.id).disabled = unlockCost(u) > state.coins;
 }
 
+// The tree is drawn as an actual tree: five branch columns, four depth rows, SVG
+// connectors. Positions come from (branch, depth), not from document flow, so the
+// prereq links can be drawn as curves between columns.
+const TREE_COLS = 5, TREE_ROWS = 4;
+const TREE_CW = 132, TREE_CH = 74, TREE_PAD = 16;
+function treePos(t) {
+  const col = BRANCHES.findIndex(b => b[0] === t.br);
+  const depth = TREE.filter(n => n.br === t.br).indexOf(t);
+  return { x: TREE_PAD + col * TREE_CW, y: TREE_PAD + 18 + depth * TREE_CH };
+}
+const TREE_W = TREE_PAD * 2 + TREE_COLS * TREE_CW;
+const TREE_H = TREE_PAD * 2 + 18 + TREE_ROWS * TREE_CH;
+
+function treeEdge(id) {
+  const t = node(id);
+  const a = treePos(t);
+  const prev = TREE.filter(n => n.br === t.br);
+  const i = prev.indexOf(t);
+  let d = '';
+  if (i > 0) {
+    // vertical link down the same branch
+    const b = treePos(prev[i - 1]);
+    const x = a.x + TREE_CW / 2, y1 = b.y + TREE_CH - 10, y2 = a.y + 2;
+    d += `<line class="tlink" x1="${x}" y1="${y1}" x2="${x}" y2="${y2}"/>`;
+  }
+  if (t.req) {
+    // curved link across branches
+    const r = node(t.req);
+    const b = treePos(r);
+    const x1 = b.x + TREE_CW / 2, y1 = b.y + TREE_CH - 10;
+    const x2 = a.x + TREE_CW / 2, y2 = a.y + 2;
+    const mx = (x1 + x2) / 2, my = (y1 + y2) / 2 - 18;
+    d += `<path class="tlink req" fill="none" d="M${x1},${y1} Q${mx},${my} ${x2},${y2}"/>`;
+  }
+  return d;
+}
+
 function buildTreeUI() {
   const host = $('tbody');
-  for (const [br, label] of BRANCHES) {
-    const h = document.createElement('div');
-    h.className = 'tbranch';
-    h.textContent = label;
-    host.append(h);
-    const grid = document.createElement('div');
-    grid.className = 'tgrid';
-    for (const t of TREE.filter(n => n.br === br)) {
-      const b = document.createElement('button');
-      b.type = 'button';
-      b.className = 'chip' + (t.star ? ' star' : '');
-      b.innerHTML =
-        '<span class="cn"></span><span class="pips"></span>' +
-        '<span class="cd"></span><span class="cc"></span>';
-      b.querySelector('.cn').textContent = t.name;
-      b.querySelector('.cd').textContent = t.desc;
-      b.addEventListener('click', () => buyNode(t.id));
-      grid.append(b);
-      ui2.chips.set(t.id, b);
-    }
-    host.append(grid);
+  host.innerHTML = '<svg class="tsvg" viewBox="0 0 ' + TREE_W + ' ' + TREE_H + '" ' +
+    'width="' + TREE_W + '" height="' + TREE_H + '">' +
+    BRANCHES.map(([br, label], i) =>
+      '<text class="thead" x="' + (TREE_PAD + i * TREE_CW + TREE_CW / 2) + '" y="14">' +
+      label.replace(/ ./, ' ') + '</text>').join('') +
+    TREE.map(t => treeEdge(t.id)).join('') +
+    TREE.map(t => {
+      const p = treePos(t);
+      return '<g class="tnode" data-id="' + t.id + '" transform="translate(' +
+        (p.x + 4) + ',' + p.y + ')">' +
+        '<rect width="' + (TREE_CW - 12) + '" height="' + (TREE_CH - 16) + '" rx="7"/>' +
+        '<text class="tn" x="8" y="16"></text>' +
+        '<text class="tp" x="8" y="30"></text>' +
+        '<text class="td" x="8" y="44"></text>' +
+        '</g>';
+    }).join('') +
+    '</svg>';
+
+  ui2.tnodes = new Map();
+  for (const g of host.querySelectorAll('.tnode')) {
+    const id = g.getAttribute('data-id');
+    ui2.tnodes.set(id, g);
+    g.addEventListener('click', () => buyNode(id));
   }
 }
 
 function paintTree() {
+  if (!changed('tree', TREE.map(n => treeRank(n.id)).join(',') + '|' + state.ascend.points)) return;
   for (const t of TREE) {
-    const el = ui2.chips.get(t.id);
+    const el = ui2.tnodes.get(t.id);
+    if (!el) continue;
     const rank = treeRank(t.id);
     const locked = treeLocked(t);
     const maxed = treeMaxed(t);
     el.classList.toggle('owned', rank > 0);
     el.classList.toggle('maxed', maxed);
     el.classList.toggle('locked', locked);
-    el.querySelector('.pips').textContent = maxed
-      ? '★'.repeat(t.max)
-      : '●'.repeat(rank) + '○'.repeat(t.max - rank);
+    el.classList.toggle('star', !!t.star);
+    const pips = maxed ? '★'.repeat(t.max) : '●'.repeat(rank) + '○'.repeat(t.max - rank);
     let label;
     if (locked) label = 'needs ' + node(t.req).name;
     else if (maxed) label = 'maxed';
@@ -904,13 +998,15 @@ function paintTree() {
       const n = nodeCount(t.id);
       const cost = n > 0 ? nodeCost(t.id, n) : 0;
       label = fmt(cost) + ' pt' + (n > 1 ? ' ×' + n : '');
-      el.querySelector('.cc').classList.toggle('poor', cost > state.ascend.points);
     }
-    el.querySelector('.cc').textContent = label;
-    el.disabled = locked || maxed || state.ascend.points <= 0;
-    if (!locked && !maxed && state.ascend.points > 0) {
-      el.disabled = nodeCost(t.id, nodeCount(t.id)) > state.ascend.points;
-    }
+    const q = c => el.querySelector('.' + c);
+    q('tn').textContent = t.name;
+    q('tp').textContent = pips;
+    q('td').textContent = label;
+    q('td').classList.toggle('poor', !locked && !maxed && nodeCost(t.id, 1) > state.ascend.points);
+    el.setAttribute('aria-disabled', String(locked || maxed || state.ascend.points <= 0));
+    const title = `${t.name} — ${t.desc} · max ${t.max} · ${label}`;
+    el.querySelector('title') || el.append(Object.assign(document.createElement('title'), { textContent: title }));
   }
   const spent = TREE.reduce((a, n) => a + treeRank(n.id) * n.cost + n.step * (treeRank(n.id) * (treeRank(n.id) - 1) / 2), 0);
   $('tpoints').textContent = `${fmt(state.ascend.points)} pts spendable · ${fmt(spent)}/${TREE_TOTAL} invested`;
@@ -974,6 +1070,9 @@ function paintBanners() {
 }
 
 function paintPrestige() {
+  if (!changed('prestige',
+    state.runEarned.toExponential(4) + '|' + state.ascend.runs + '|' + state.ascend.points + '|' +
+    state.legacy.runs + '|' + state.legacy.points + '|' + state.legacyEarned.toExponential(4))) return;
   const gain = ascendGain();
   const ready = gain > 0;
   const pct = Math.min(100, state.runEarned / ASCEND_AT * 100);
@@ -1012,6 +1111,9 @@ function render() {
   paintPrestige();
   paintLegacy();
   paintParity();
+  paintBars();
+  paintOwned();
+  paintAchProgress();
   applyCompletion();
   // Stats shows live numbers, so refresh it while open. The other panels are static
   // between unlocks and only rebuild when opened.
@@ -1020,16 +1122,26 @@ function render() {
     const a = $('gcoins'), b = $('gcps');
     if (a && b) { drawGraph(a, rt.gCoins); drawGraph(b, rt.gCps); }
   }
+  if (ovlName === 'tree') paintTree();
+  // The centre production graph redraws on the 250ms tick, not per frame: 60 repaints a
+  // second of a large canvas is pure waste and the data only changes four times a second.
+  if (ovlName === 'rate') {
+    const c = $('gcps2');
+    if (c) drawGraph(c, rt.gCps);
+  }
 }
 
 // ---------------------------------------------------------------- ascend
-const ASCEND_AT = 1e6;
+const ASCEND_AT = 1e8;
 const treeRank = id => state.tree[id] || 0;
 const perkRank = id => state.perks[id] || 0;
 const ascendMult = () => 1 + 0.15 * state.ascend.earned;
 const legacyMult = () => 1 + 0.25 * state.legacy.earned;
 
 // M1 and L7 are step 6 and 7; they read 0 until those land, and this needs no change.
+// The divisor tracks the gate, so a minimum qualifying run is always worth 1 point. When
+// the gate moved from 1e6 to 1e8 this was left hardcoded at 1e6, which paid 10 points for
+// the smallest possible run.
 function ascendGain() {
   if (state.runEarned < ASCEND_AT) return 0;
   const m1 = treeRank('M1'), l7 = perkRank('L7');
@@ -1246,10 +1358,17 @@ function popup(text, kind) {
   if (!el._wired) { el._wired = true; }
   el.style.animation = 'none';
   void el.offsetWidth;
+  el.style.opacity = '1';
+  el.style.visibility = 'visible';
   el.style.animation = 'rise .7s ease-out forwards';
   clearTimeout(el._t);
   el._t = setTimeout(() => {
+    // The animation uses `forwards`, so its end state is opacity 0. Simply clearing the
+    // animation reverts to base CSS at opacity 1 and the pooled element stays on screen
+    // forever. Hide it explicitly, or the numbers just pile up.
     el.style.animation = 'none';
+    el.style.opacity = '0';
+    el.style.visibility = 'hidden';
     if (host.children.length > 12) el.remove(); else popPool.push(el);
   }, 700);
   // Hard cap: never more than 12 nodes on screen, however fast the player clicks.
@@ -1369,19 +1488,14 @@ function drawBill() {
 // ---------------------------------------------------------------- CC parity
 const MILK_STEPS = [0, 1, 2, 3, 5, 8, 13, 21, 34];   // thresholds for ranks 0..8
 const MILK_DROP = 0.01;                               // per click
-const SEASON_COST = 0.015;                           // of lifetime earned
-const SEASON_MS = 15 * 60 * 1000;
-const SEASON_MAX = 3;
-const SEASON_MULT = 7;
 const GOLDEN_CHANCE = 0.0015;                        // per tick, about one per 3 min
 const GOLDEN_MS = 15000;
+const GOLDEN_FLOOR = 60000;      // hard minimum between spawns, whatever the roll says
 const FRENZY_MS = 15000;
 const FRENZY_MULT = 7;
 
 const milkRank = () => { let r = 0; for (let i = 0; i < MILK_STEPS.length; i++) if (state.milk.progress >= MILK_STEPS[i]) r = i; return r; };
 const milkMult = () => Math.pow(1.05, milkRank());
-const activeSeasons = () => state.seasons.filter(s => s.expiresAt > Date.now()).length;
-const seasonMult = () => Math.pow(SEASON_MULT, activeSeasons());
 const frenzyOn = () => (rt.frenzyUntil || 0) > performance.now();
 const cpsBoostOn = () => (rt.cpsUntil || 0) > performance.now();
 const cpsBoostMult = () => (cpsBoostOn() ? 2 : 1);
@@ -1406,22 +1520,23 @@ function drinkMilk() {
   toast(`Drank the milk. Rank reset, +${fmt(bonus)} ascend points.`, 'good', 6000);
 }
 
-const seasonCost = () => Math.floor(state.totalEarned * SEASON_COST);
-function buySeason() {
-  if (state.seasons.length >= SEASON_MAX) return;
-  const c = seasonCost();
-  if (c > state.coins) return;
-  // Spending coins here must not count as earned, or a season would pay for itself.
-  state.coins -= c;
-  state.seasons.push({ expiresAt: Date.now() + SEASON_MS });
-  toast(`Season active — ×${SEASON_MULT} for 15 minutes.`, 'good', 5000);
-}
-
+// ------------------------------------------------------------------ golden cookies
 const GOLDEN_PRIZES = [
   { w: 20, label: 'Click frenzy: ×7 click for 15s', run: () => { rt.frenzyUntil = performance.now() + FRENZY_MS; } },
   { w: 25, label: 'A free building', run: () => {
-      const open = BUILDINGS.map((b, i) => i).filter(i => state.buildings[i] < CAP);
-      if (open.length) { const i = open[Math.floor(Math.random() * open.length)]; state.buildings[i]++; }
+      // Only buildings the player already owns and is not capped on. Handing out a tier
+      // they have never touched trivialises the whole store.
+      const open = BUILDINGS.map((b, i) => i)
+        .filter(i => state.buildings[i] > 0 && state.buildings[i] < CAP);
+      if (open.length) {
+        const i = open[Math.floor(Math.random() * open.length)];
+        state.buildings[i]++;
+      } else if (state.buildings[0] < CAP) {
+        state.buildings[0]++;            // nothing owned yet: fall back to the first tier
+      } else {
+        state.coins = Math.min(state.coins + d.cps * 180, CEIL);
+        return 'production instead — no buildings owned yet';
+      }
     } },
   { w: 25, label: 'A free upgrade', run: () => {
       // Drawn from what is actually unlocked and unbought, never from the hidden pool.
@@ -1435,6 +1550,10 @@ const GOLDEN_PRIZES = [
 function spawnGolden() {
   const host = $('goldens');
   if (!host || host.firstChild) return;                 // one on screen, maximum
+  // Hard floor on spawn rate, independent of the per-tick roll. Nothing may bypass it.
+  const now = performance.now();
+  if (now - (rt.lastGolden || 0) < GOLDEN_FLOOR) return;
+  rt.lastGolden = now;
   const el = document.createElement('button');
   el.type = 'button';
   el.className = 'gcookie';
@@ -1547,21 +1666,26 @@ function graphInk() {
   return inkCache;
 }
 
+// Painters used to run inside render() at 60 Hz, writing several properties on every
+// chip and row each frame. That forces a style recalc and a repaint of every glowing
+// element 60 times a second, which reads as flicker. Repaint only when the state the
+// painter depends on has actually changed.
+const sig = {};
+function changed(key, value) {
+  if (sig[key] === value) return false;
+  sig[key] = value;
+  return true;
+}
+
 function paintParity() {
   const rank = milkRank();
+  if (!changed('parity', rank + '|' + state.milk.progress.toFixed(4))) return;
   const nextStep = rank + 1 < MILK_STEPS.length ? MILK_STEPS[rank + 1] : MILK_STEPS[MILK_STEPS.length - 1];
   const prevStep = MILK_STEPS[rank];
   const span = Math.max(1e-6, nextStep - prevStep);
   $('milkbar').firstElementChild.style.width = Math.min(100, (state.milk.progress - prevStep) / span * 100).toFixed(1) + '%';
   $('milktip').textContent = rank >= MILK_STEPS.length - 1 ? 'MILK MAX' : `MILK ${rank} · ×${milkMult().toFixed(2)}`;
   $('milkbar').hidden = rank < 1 && state.milk.progress <= 0;
-
-  const live = activeSeasons();
-  $('seaslab').textContent = live
-    ? `Season ×${seasonMult()} — ${Math.ceil((Math.max(...state.seasons.map(s => s.expiresAt)) - Date.now()) / 1000)}s left`
-    : `Season ×${SEASON_MULT} for 15m — ${fmt(seasonCost())}`;
-  $('buyseason').disabled = state.seasons.length >= SEASON_MAX || seasonCost() > state.coins;
-  $('buyseason').textContent = state.seasons.length >= SEASON_MAX ? 'Maxed' : 'Season';
 }
 
 // ---------------------------------------------------------------- easter eggs
@@ -1581,16 +1705,21 @@ function checkEggs(e) {
   }
 }
 
-// 50 clicks on the bill inside 2 seconds.
-let fast = [];
+// 50 clicks on the bill inside 2 seconds. This used to grant a free golden cookie,
+// which made it a faucet: the counter cleared and retriggered, so a normal clicking rate
+// produced a cookie every couple of seconds, and each one is 25% a free building. It
+// now grants a click frenzy, and has its own cooldown so it cannot spam.
+let fast = [], fastCooldown = 0;
 function checkFrenzyClicks() {
   const t = performance.now();
+  if (t < fastCooldown) return;
   fast.push(t);
   while (fast.length && t - fast[0] > 2000) fast.shift();
   if (fast.length >= 50) {
     fast = [];
-    spawnGolden();
-    toast('HACKING', 'warn', 4000);
+    fastCooldown = t + 60000;
+    rt.frenzyUntil = t + FRENZY_MS;
+    toast('HACKING — click frenzy', 'warn', 4000);
   }
 }
 
@@ -1599,11 +1728,9 @@ const CONSOLE_HELP = [
   'add [n]     grant coins (not counted as earned)',
   'build [n]   grant n units of a random building, up to the 1000 cap',
   'milk [n]    set milk rank (0-8)',
-  'season      grant a free 15-minute season',
   'golden      spawn a golden cookie now',
   'ascend      trigger an Ascend',
   'legacy      trigger a Legacy',
-  'fill        max every tree node, perk, upgrade and achievement',
   'reset       hard reset, same as Preferences',
   'help        this list',
 ];
@@ -1621,20 +1748,77 @@ function runConsole(line) {
       return `+${k} ${BUILDINGS[i].label}`;
     }
     case 'milk': state.milk.progress = MILK_STEPS[Math.max(0, Math.min(8, isFinite(n) ? n : 8))]; return `milk rank ${milkRank()}`;
-    case 'season': state.seasons.push({ expiresAt: Date.now() + SEASON_MS }); return 'season granted';
     case 'golden': spawnGolden(); return 'golden cookie spawned';
-    case 'ascend': doAscend(); return 'ascend attempted (needs runEarned >= 1e6)';
+    case 'ascend': doAscend(); return `ascend attempted (needs runEarned >= ${fmt(ASCEND_AT)})`;
     case 'legacy': doLegacy(); return 'legacy attempted (needs 3 ascends)';
-    case 'fill':
-      TREE.forEach(t => { state.tree[t.id] = t.max; });
-      PERKS.forEach(p => { state.perks[p.id] = p.max; });
-      UPGRADES.forEach(u => { if (u.unlock(state) && !has(u.id)) state.upgrades.push(u.id); });
-      ACHIEVEMENTS.forEach(a => { state.ach[a.id] = true; });
-      return 'everything filled';
+    // No `fill`: it maxed every tree node, perk, upgrade and achievement in one keypress,
+    // which is an instant win in a game about long-term progression.
     case 'reset': store.del(KEY); location.reload(); return 'resetting';
     case 'help': return CONSOLE_HELP.join('\n');
     default: return 'unknown command. try "help"';
   }
+}
+
+// ------------------------------------------------- centre band information panels
+function buildBars() {
+  const host = $('bars');
+  const cap = document.createElement('div');
+  cap.className = 'empty';
+  cap.id = 'barbase';
+  host.append(cap);
+  for (let i = 0; i < BUILDINGS.length; i++) {
+    const row = document.createElement('div');
+    row.className = 'bar';
+    row.innerHTML = `<span class="bl">${BUILDINGS[i].label}</span>` +
+      '<span class="bt"><i></i></span><span class="bv"></span>';
+    host.append(row);
+    ui2.bars.push({ fill: row.querySelector('i'), val: row.querySelector('.bv') });
+  }
+}
+
+function paintBars() {
+  let base = 0;
+  const parts = [];
+  for (let i = 0; i < BUILDINGS.length; i++) {
+    const v = state.buildings[i] * buildingCps(i) * (has('u_b' + i) ? 3 : 1);
+    parts.push(v);
+    base += v;
+  }
+  if (!changed('bars', parts.join(',') + '|' + Math.floor(d.cps))) return;
+  parts.forEach((v, i) => {
+    const el = ui2.bars[i];
+    if (!el) return;
+    const pct = base > 0 ? (v / base) * 100 : 0;
+    el.fill.style.width = pct.toFixed(2) + '%';
+    el.val.textContent = v > 0 ? fmt(v) + ' (' + pct.toFixed(0) + '%)' : '—';
+  });
+  $('barbase').textContent = `Buildings supply ${fmt(base)} base cps of ${fmt(d.cps)} total. ` +
+    `The rest is multipliers.`;
+}
+
+function paintOwned() {
+  const list = UPGRADES.filter(u => has(u.id));
+  if (!changed('owned', list.map(u => u.id).join(','))) return;
+  const host = $('owngrid');
+  host.innerHTML = '';
+  for (const u of list) {
+    const el = document.createElement('div');
+    el.className = 'oico';
+    el.textContent = u.icon;
+    el.title = `${u.name} — ${u.effect}`;
+    host.append(el);
+  }
+  $('ownempty').hidden = list.length > 0;
+}
+
+function paintAchProgress() {
+  const n = achUnlocked();
+  if (!changed('achpanel', n)) return;
+  const pct = (n / ACHIEVEMENTS.length) * 100;
+  $('achfill').style.width = pct.toFixed(1) + '%';
+  const next = ACHIEVEMENTS.find(a => !state.ach[a.id]);
+  $('achlabel').textContent = `${n}/${ACHIEVEMENTS.length} · ×${achBonus().toFixed(2)}` +
+    (next ? ` · next: ${next.name}` : ' · all done');
 }
 
 // ---------------------------------------------------------------- panels
@@ -1657,7 +1841,6 @@ function statsBody() {
     ['Legacy perks', `${PERKS.reduce((a,p)=>a+perkRank(p.id),0)} / ${PERKS_TOTAL}`],
     ['Achievements', `${achUnlocked()} / ${ACHIEVEMENTS.length} · ×${achBonus().toFixed(2)}`],
     ['Milk', `rank ${milkRank()} · ×${milkMult().toFixed(2)} · ${state.milk.lifetime.toFixed(2)} lifetime`],
-    ['Seasons', `${state.seasons.length}/3 active · ×${seasonMult()}`],
   ];
   let html = rows.map(([k, v]) =>
     `<div class="statrow"><span class="k">${k}</span><span class="v">${v}</span></div>`).join('');
@@ -1856,7 +2039,7 @@ function wirePrefs() {
 
 let ovlName = null;
 function openOvl(name) {
-  const titles = { stats: 'Stats', ach: 'Achievements', prefs: 'Preferences' };
+  const titles = { stats: 'Stats', ach: 'Achievements', prefs: 'Options', tree: 'Skill Tree' };
   if (name === 'prefs') {
     $('ovlbody').innerHTML =
       '<div class="ovlrow"><label for="ptheme">Theme</label>' +
@@ -1876,6 +2059,10 @@ function openOvl(name) {
     wirePrefs();
   } else if (name === 'ach') {
     $('ovlbody').innerHTML = '<div class="agrid">' + achBody() + '</div>';
+  } else if (name === 'tree') {
+    $('ovlbody').innerHTML = '<div id="tbody"></div><div class="tpoints" id="tpoints"></div>';
+    buildTreeUI();
+    paintTree();
   } else {
     $('ovlbody').innerHTML = '<div id="statbody">' + statsBody() + '</div>' +
       '<div class="graph"><div class="glab">Cookies and cps, last 10 minutes (log)</div>' +
@@ -1926,19 +2113,17 @@ function boot() {
   applyOffline();
   rt.last = performance.now();
   buildBuildingsUI();
-  buildTreeUI();
   buildLegacyUI();
+  buildBars();
   const bill = $('bill');
   bill.addEventListener('pointerdown', e => { e.preventDefault(); click(); checkFrenzyClicks(); });
   bill.addEventListener('keydown', e => {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); click(); checkFrenzyClicks(); }
   });
   document.querySelectorAll('.tabs button').forEach(b => {
-    b.removeAttribute('aria-disabled');
     b.addEventListener('click', () => openOvl(b.dataset.panel));
   });
   $('ovlclose').addEventListener('click', closeOvl);
-  $('buyseason').addEventListener('click', buySeason);
   $('ascend').addEventListener('click', doAscend);
   $('legacybtn').addEventListener('click', doLegacy);
   $('ovl').addEventListener('click', e => { if (e.target === $('ovl')) closeOvl(); });
