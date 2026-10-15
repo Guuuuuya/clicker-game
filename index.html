@@ -127,7 +127,11 @@ h2{
 /* The backing store is 240*dpr for crispness, but it must NOT also become the layout
    size. With no CSS width the canvas laid out at 240*dpr CSS px -- 720px on a dpr-3 phone,
    which stretched the grid and pushed every panel off-screen. Pin the layout size. */
-#bill{display:block; width:240px; height:120px}
+/* The shared overlay card is 560px, which was SHRINKING the 990px tree to fit -- the skill
+   tree was displayed smaller than it was authored. The tree opens in a wide card instead.
+   The width lives on .ovlbox (the dialog), not .ovl (the backdrop). */
+.ovl.wide .ovlbox{width:min(1040px,94vw)}
+#bill{display:block}
 #bill{
   width:240px; height:120px; border-radius:8px; cursor:pointer;
   display:block; touch-action:manipulation;
@@ -223,9 +227,9 @@ h2{
 .tnode.maxed rect{stroke:var(--good); fill:color-mix(in srgb,var(--good) 16%,var(--panel2))}
 .tnode.locked{opacity:.32; cursor:not-allowed}
 .tnode.star.owned rect{stroke:var(--gold); fill:color-mix(in srgb,var(--gold) 14%,var(--panel2))}
-.tn{fill:var(--text); font-size:12px; font-weight:600}
-.tp{fill:var(--accent2); font-size:10px; letter-spacing:1px}
-.td{fill:var(--dim); font-size:10px}
+.tn{fill:var(--text); font-size:15px; font-weight:600}
+.tp{fill:var(--accent2); font-size:12px; letter-spacing:1px}
+.td{fill:var(--dim); font-size:12px}
 .td.poor{fill:var(--bad)}
 
 /* ---- centre band information panels (step 11) ---- */
@@ -386,14 +390,11 @@ select.btn{padding-right:var(--s2)}
   <div class="left">
     <nav class="tabs" aria-label="Panels">
       <button type="button" data-panel="prefs">Options</button>
-      <button type="button" data-panel="stats">Stats</button>
-      <button type="button" data-panel="ach">Achievements</button>
       <button type="button" data-panel="tree">Skill Tree</button>
     </nav>
     <div class="balstack">
       <div class="bakery" id="bakery">Rambo Bank</div>
-      <div class="bal" id="bal" aria-live="polite">0</div>
-      <div class="total" id="total">0 cookies</div>
+      <div class="total" id="bal" aria-live="polite">0</div>
       <div class="cpsline">per second <span id="cps">0</span></div>
       <div class="sub" id="sub"></div>
     </div>
@@ -447,6 +448,12 @@ select.btn{padding-right:var(--s2)}
     <section id="achpanel" class="panel">
       <h2>Achievements</h2>
       <div class="achprog"><div class="achbar"><i id="achfill"></i></div><span id="achlabel"></span></div>
+      <div class="agrid" id="achbody"></div>
+    </section>
+
+    <section id="statspanel" class="panel">
+      <h2>Stats</h2>
+      <div id="statbody"></div>
     </section>
   </div>
 
@@ -715,7 +722,10 @@ function clickPower() {
   if (has('u_c2')) p *= 2;
   if (has('u_c3')) p *= 3;
   if (has('u_c6')) p *= 10;
-  p *= ascendMult() * legacyMult() * achBonus();
+  // Achievements deliberately do NOT touch click power. a1 'First Blood' pays x1.05 to
+  // all gains and unlocks on click #1, so it was applied from the very first click and a
+  // plain click paid 1.05 -- the base read as 1.05 and never as 1. It still boosts cps.
+  p *= ascendMult() * legacyMult();
   if (frenzyOn()) p *= FRENZY_MULT;
   // Cloned Hands pays a share of cps per click. Additive, same reason as C2:
   // a multiplicative factor here would be self-referential and undefined.
@@ -797,6 +807,11 @@ function tick() {
   calc();
   checkAchievements();
   graphSample();
+  // Stats and the production graph live in the centre band now, so they refresh here on
+  // the 250ms tick rather than in render(): rebuilding statbody and redrawing a large
+  // canvas 60 times a second is pure waste, and the data only moves 4x/second.
+  paintStats();
+  drawGraph($('gcps2'), rt.gCps);
   // Golden cookies spawn per tick, so a backgrounded tab ticking once a minute would
   // eat the intended one-per-three-minutes rate. Gate on visibility.
   if (document.visibilityState === 'visible' && Math.random() < GOLDEN_CHANCE) spawnGolden();
@@ -921,7 +936,7 @@ function paintUpgrades() {
 // connectors. Positions come from (branch, depth), not from document flow, so the
 // prereq links can be drawn as curves between columns.
 const TREE_COLS = 5, TREE_ROWS = 4;
-const TREE_CW = 132, TREE_CH = 74, TREE_PAD = 16;
+const TREE_CW = 190, TREE_CH = 104, TREE_PAD = 20;
 function treePos(t) {
   const col = BRANCHES.findIndex(b => b[0] === t.br);
   const depth = TREE.filter(n => n.br === t.br).indexOf(t);
@@ -1100,10 +1115,9 @@ function applyCompletion() {
 }
 
 function render() {
-  // CC stacks the numbers above the cookie: bank balance, then the total in the
-  // largest type, then the per-second rate in red.
+  // The bank balance is the headline number, as in CC. Total earned is a statistic, not
+  // the thing you look at, so it lives in the Stats panel rather than the left stack.
   $('bal').textContent = fmt(state.coins);
-  $('total').textContent = fmt(state.totalEarned) + ' cookies';
   $('cps').textContent = fmt(d.cps);
   $('sub').textContent =
     `${fmt(state.runEarned)} run · ×${ascendMult().toFixed(1)} ascend · ` +
@@ -1123,24 +1137,11 @@ function render() {
   paintOwned();
   paintAchProgress();
   applyCompletion();
-  // Stats shows live numbers, so refresh it while open. The other panels are static
-  // between unlocks and only rebuild when opened.
-  if (ovlName === 'stats') {
-    $('statbody') && ($('statbody').innerHTML = statsBody());
-    const a = $('gcoins'), b = $('gcps');
-    if (a && b) { drawGraph(a, rt.gCoins); drawGraph(b, rt.gCps); }
-  }
   if (ovlName === 'tree') paintTree();
-  // The centre production graph redraws on the 250ms tick, not per frame: 60 repaints a
-  // second of a large canvas is pure waste and the data only changes four times a second.
-  if (ovlName === 'rate') {
-    const c = $('gcps2');
-    if (c) drawGraph(c, rt.gCps);
-  }
 }
 
 // ---------------------------------------------------------------- ascend
-const ASCEND_AT = 1e8;
+const ASCEND_AT = 1e6;
 const treeRank = id => state.tree[id] || 0;
 const perkRank = id => state.perks[id] || 0;
 const ascendMult = () => 1 + 0.15 * state.ascend.earned;
@@ -1529,7 +1530,6 @@ function drinkMilk() {
   state.milk.progress = 0;
   state.ascend.points += bonus;
   save();
-  if (ovlName === 'stats') $('statbody').innerHTML = statsBody();
   toast(`Drank the milk. Rank reset, +${fmt(bonus)} ascend points.`, 'good', 6000);
 }
 
@@ -1832,6 +1832,18 @@ function paintAchProgress() {
   const next = ACHIEVEMENTS.find(a => !state.ach[a.id]);
   $('achlabel').textContent = `${n}/${ACHIEVEMENTS.length} · ×${achBonus().toFixed(2)}` +
     (next ? ` · next: ${next.name}` : ' · all done');
+  // The full list lives in the centre band now, not behind a button.
+  $('achbody').innerHTML = achBody();
+}
+
+// Stats as a centre-band panel. Rebuilt only when the numbers actually move -- innerHTML
+// on a live panel 4x/second is wasteful and it also destroys any text selection.
+function paintStats() {
+  const sigKey = [state.coins, state.totalEarned, state.runEarned, state.clicks,
+    state.ascend.points, state.legacy.points, d.cps, state.buildings.join(''),
+    state.upgrades.length, state.ach && Object.keys(state.ach).length].join('|');
+  if (!changed('stats', sigKey)) return;
+  $('statbody').innerHTML = statsBody();
 }
 
 // ---------------------------------------------------------------- panels
@@ -2058,7 +2070,7 @@ function wirePrefs() {
 
 let ovlName = null;
 function openOvl(name) {
-  const titles = { stats: 'Stats', ach: 'Achievements', prefs: 'Options', tree: 'Skill Tree' };
+  const titles = { prefs: 'Options', tree: 'Skill Tree' };
   if (name === 'prefs') {
     $('ovlbody').innerHTML =
       '<div class="ovlrow"><label for="ptheme">Theme</label>' +
@@ -2076,26 +2088,15 @@ function openOvl(name) {
       '<div class="ovlrow"><label>Hard reset<span class="hint">Deletes everything. No undo.</span></label>' +
         '<button class="btn danger" id="ptreset" type="button">Reset</button></div>';
     wirePrefs();
-  } else if (name === 'ach') {
-    $('ovlbody').innerHTML = '<div class="agrid">' + achBody() + '</div>';
   } else if (name === 'tree') {
     $('ovlbody').innerHTML = '<div id="tbody"></div><div class="tpoints" id="tpoints"></div>';
     buildTreeUI();
     paintTree();
   } else {
-    $('ovlbody').innerHTML = '<div id="statbody">' + statsBody() + '</div>' +
-      '<div class="graph"><div class="glab">Cookies and cps, last 10 minutes (log)</div>' +
-      '<canvas id="gcoins" width="520" height="54"></canvas>' +
-      '<div class="glab" style="margin-top:6px">Production rate</div>' +
-      '<canvas id="gcps" width="520" height="54"></canvas></div>';
-    setTimeout(() => {
-      const a = $('gcoins'), b = $('gcps');
-      if (!a || !b) return;
-      drawGraph(a, rt.gCoins);
-      drawGraph(b, rt.gCps);
-    }, 0);
+    return;
   }
   $('ovltitle').textContent = titles[name] || 'Preferences';
+  $('ovl').classList.toggle('wide', name === 'tree');
   ovlName = name;
   $('ovl').hidden = false;
 }
