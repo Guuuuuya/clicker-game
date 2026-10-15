@@ -216,9 +216,12 @@ function fmt(v) {
   let i = 0, n = v;
   while (n >= 1000 && i < SUF.length - 1) { n /= 1000; i++; }
   if (n >= 999.5 && i < SUF.length - 1) { n /= 1000; i++; }
-  // Ladder ends at Td (1e45) but the CEIL clamp permits 1.8e302, so anything past
-  // the ladder goes exponential rather than printing a raw float with a wrong suffix.
-  if (i === SUF.length - 1 && n >= 999.5) return v.toExponential(2);
+  // The ladder's last index is 14, so Td is 1e42, not 1e45. The CEIL clamp permits
+  // 1.8e302, leaving 260 orders of magnitude uncovered. Past n >= 100 the ladder is
+  // exhausted and either prints absurd integers (100000000Td) or, once float error
+  // accumulates into the mantissa, silently wrong values (1.0000000000000002e+58Td).
+  // Use v, not n: v is the true value, n carries the accumulated error.
+  if (i === SUF.length - 1 && n >= 100) return v.toExponential(2);
   return (n < 10 ? n.toFixed(2) : n < 100 ? n.toFixed(1) : Math.floor(n)) + SUF[i];
 }
 
@@ -384,7 +387,10 @@ function tick() {
   rt.last = now;
   rt.idleMs += dt;
   calc();
-  state.coins = Math.min(state.coins + d.cps * dt / 1000, CEIL);
+  // Passive income goes through earn(). Crediting state.coins directly would leave
+  // runEarned and totalEarned untouched, which zeroes out Ascend points and makes
+  // u_g6's totalEarned >= 1e7 unlock permanently unreachable.
+  earn(d.cps * dt / 1000);
 }
 
 // ---------------------------------------------------------------- render
@@ -432,7 +438,9 @@ function paintBuildings() {
     const afford = !capped && count > 0 && isFinite(cost) && cost <= state.coins;
 
     el.own.textContent = fmt(n);
-    el.cost.textContent = fmt(unitPrice(i, 0));
+    // Price shown is for the selected buy amount, not one unit. CC does the same:
+    // a row reading "Buy 10" must show what 10 costs, or the button is a guess.
+    el.cost.textContent = fmt(count > 0 && isFinite(cost) ? cost : unitPrice(i, 0));
     el.cost.classList.toggle('ok', afford);
     el.max.style.display = capped ? '' : 'none';
     el.buy.textContent = capped ? 'MAX' : state.ui.buyAmount === 'max' ? 'Buy MAX' : `Buy ${count}`;
