@@ -123,6 +123,36 @@ h2{
 #prestige{width:100%; max-width:420px}
 @media (prefers-reduced-motion: reduce){ #bill:active{transform:none} }
 
+/* ---- skill tree (step 6) ---- */
+.tbranch{
+  font-size:11px; letter-spacing:.12em; color:var(--dim); text-transform:uppercase;
+  margin:var(--s3) 0 var(--s1);
+}
+.tbranch:first-child{margin-top:0}
+.tgrid{display:grid; grid-template-columns:1fr 1fr; gap:var(--s1)}
+.chip{
+  display:flex; flex-direction:column; gap:2px; text-align:left; padding:var(--s2);
+  background:var(--panel2); border:1px solid var(--line); border-radius:8px;
+  cursor:pointer; font-size:11px; line-height:1.3; color:var(--text);
+}
+.chip:hover:not(:disabled){border-width:2px; border-color:var(--accent); box-shadow:var(--glow); padding:calc(var(--s2) - 1px)}
+.chip:active:not(:disabled){transform:translateY(1px)}
+.chip:disabled{opacity:.35; cursor:not-allowed}
+.chip.owned{border:2px solid var(--accent); box-shadow:var(--glow); padding:calc(var(--s2) - 1px)}
+.chip.star.owned{border-color:var(--gold)}
+.chip.maxed{opacity:1; border-color:var(--good)}
+.chip.locked{opacity:.25}
+.chip .cn{font-weight:600}
+.chip .cd{color:var(--dim); font-size:10px; min-height:2.6em}
+.chip .pips{letter-spacing:1px; color:var(--accent2); font-size:10px}
+.chip .cc{color:var(--good); font-size:11px}
+.chip .cc.poor{color:var(--bad)}
+.tpoints{
+  margin-top:var(--s3); padding-top:var(--s2); border-top:1px solid var(--line);
+  font-size:12px; color:var(--dim);
+}
+@media (prefers-reduced-motion: reduce){ .chip:active:not(:disabled){transform:none} }
+
 /* ---- prestige (step 5) ---- */
 .pbar{
   height:10px; background:var(--panel2); border:1px solid var(--line);
@@ -263,7 +293,8 @@ select.btn{padding-right:var(--s2)}
 
   <section id="tree" class="col panel">
     <h2>Skill Tree</h2>
-    <p class="empty">Step 6.</p>
+    <div id="tbody"></div>
+    <div class="tpoints" id="tpoints"></div>
   </section>
 </main>
 
@@ -436,8 +467,11 @@ function buyUpgrade(u) {
   render();   // the icon goes now, not on the next tick
 }
 
-// Coin-cost discount. E1 (step 6) and L1 (step 7) extend this.
-const discount = () => Math.max(0.4, (has('u_g1') ? 0.9 : 1) * (has('u_g7') ? 0.75 : 1));
+// Coin-cost discount, shared by buildings and upgrades. L1 (step 7) extends this.
+const discount = () => Math.max(
+  0.4,
+  Math.pow(0.95, treeRank('E1')) * (has('u_g1') ? 0.9 : 1) * (has('u_g7') ? 0.75 : 1)
+);
 
 // One shared exponent: every unit purchased raises every building's cost and output.
 const crossBoost = () => Math.pow(1.15, totalBuildings());
@@ -480,6 +514,7 @@ function buyBuilding(i) {
 
 // ---------------------------------------------------------------- derived (never stored)
 const d = { cps: 0, clickPower: 1 };
+const idleMult = () => Math.min(5, Math.pow(1.05, treeRank('E2') * (rt.idleMs / 60000)));
 
 function clickPower() {
   // Upgrades are one-shot, so each factor is 1 or n, never n^rank.
@@ -492,6 +527,12 @@ function clickPower() {
   // Cloned Hands pays a share of cps per click. Additive, same reason as C2:
   // a multiplicative factor here would be self-referential and undefined.
   if (has('u_c5')) p += 0.01 * d.cps;
+  // C1 is additive per rank, M2 is a flat permanent multiplier.
+  p *= (1 + 0.5 * treeRank('C1')) * Math.pow(5, treeRank('M2'));
+  // C3 decays after 3s without a click, C4 is a 3s window every 30s. Both are runtime
+  // clocks: a reload resetting them is the correct behaviour, not an exploit.
+  if (treeRank('C3') && performance.now() - rt.lastClick < 3000) p *= 2;
+  if (treeRank('C4') && performance.now() % 30000 < 3000) p *= 10;
   return p;
 }
 
@@ -510,10 +551,14 @@ function calc() {
   if (has('u_g6')) cps *= 1 + state.coins / 1e7;
   if (has('u_g9')) cps *= 1 + totalBuildings() / 10;
   if (has('u_c4')) cps += 2;
+  // Skill tree: A1 compounds per rank, A3 is additive, E2 compounds with idle time and
+  // caps at x5 so it cannot run away during a long absence.
+  cps *= Math.pow(1.05, treeRank('A1')) * (1 + 0.2 * treeRank('A3'));
+  cps *= idleMult();
   // Prestige multipliers. They read `earned`, never the spendable `points` pool, so
   // buying a tree node can never lower the player's multiplier.
   cps *= ascendMult() * legacyMult();
-  // Milk, seasons, achievements and frenzy fold in at steps 6-9.
+  // Milk and seasons (step 9) fold in here.
   d.cps = Math.min(cps, CEIL);
   d.clickPower = Math.min(clickPower(), CEIL);
 }
@@ -548,11 +593,29 @@ function tick() {
   // runEarned and totalEarned untouched, which zeroes out Ascend points and makes
   // u_g6's totalEarned >= 1e7 unlock permanently unreachable.
   earn(d.cps * dt / 1000);
+  // E4 Gold Rush: 1% per tick for a x50 burst. Rolled per tick, so it fires about
+  // 4 times a minute at 4 ticks/sec, and scales with dt like ordinary income does.
+  if (treeRank('E4') && d.cps > 0 && Math.random() < 0.01) earn(d.cps * dt / 1000 * 50);
+  // A4 Auto-Invest: one building every 10s, cheapest first. Not a while-loop -- looping
+  // would make it auto-max and remove the reason to click anything.
+  if (treeRank('A4')) {
+    rt.investAcc += dt;
+    if (rt.investAcc >= 10000) {
+      rt.investAcc = 0;
+      let best = -1, bestCost = Infinity;
+      for (let i = 0; i < BUILDINGS.length; i++) {
+        if (state.buildings[i] >= CAP) continue;
+        const c = unitPrice(i, 0);
+        if (c <= state.coins && c < bestCost) { bestCost = c; best = i; }
+      }
+      if (best >= 0) { state.coins -= bestCost; state.buildings[best]++; }
+    }
+  }
 }
 
 // ---------------------------------------------------------------- render
 const AMOUNTS = [['1', 1], ['10', 10], ['100', 100], ['MAX', 'max']];
-const ui2 = { rows: [], sel: [], ups: new Map(), upKey: '' };
+const ui2 = { rows: [], sel: [], ups: new Map(), upKey: '', chips: new Map() };
 
 function buildBuildingsUI() {
   const sel = $('buysel');
@@ -628,6 +691,63 @@ function paintUpgrades() {
   for (const u of list) ui2.ups.get(u.id).disabled = unlockCost(u) > state.coins;
 }
 
+function buildTreeUI() {
+  const host = $('tbody');
+  for (const [br, label] of BRANCHES) {
+    const h = document.createElement('div');
+    h.className = 'tbranch';
+    h.textContent = label;
+    host.append(h);
+    const grid = document.createElement('div');
+    grid.className = 'tgrid';
+    for (const t of TREE.filter(n => n.br === br)) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'chip' + (t.star ? ' star' : '');
+      b.innerHTML =
+        '<span class="cn"></span><span class="pips"></span>' +
+        '<span class="cd"></span><span class="cc"></span>';
+      b.querySelector('.cn').textContent = t.name;
+      b.querySelector('.cd').textContent = t.desc;
+      b.addEventListener('click', () => buyNode(t.id));
+      grid.append(b);
+      ui2.chips.set(t.id, b);
+    }
+    host.append(grid);
+  }
+}
+
+function paintTree() {
+  for (const t of TREE) {
+    const el = ui2.chips.get(t.id);
+    const rank = treeRank(t.id);
+    const locked = treeLocked(t);
+    const maxed = treeMaxed(t);
+    el.classList.toggle('owned', rank > 0);
+    el.classList.toggle('maxed', maxed);
+    el.classList.toggle('locked', locked);
+    el.querySelector('.pips').textContent = maxed
+      ? '★'.repeat(t.max)
+      : '●'.repeat(rank) + '○'.repeat(t.max - rank);
+    let label;
+    if (locked) label = 'needs ' + node(t.req).name;
+    else if (maxed) label = 'maxed';
+    else {
+      const n = nodeCount(t.id);
+      const cost = n > 0 ? nodeCost(t.id, n) : 0;
+      label = fmt(cost) + ' pt' + (n > 1 ? ' ×' + n : '');
+      el.querySelector('.cc').classList.toggle('poor', cost > state.ascend.points);
+    }
+    el.querySelector('.cc').textContent = label;
+    el.disabled = locked || maxed || state.ascend.points <= 0;
+    if (!locked && !maxed && state.ascend.points > 0) {
+      el.disabled = nodeCost(t.id, nodeCount(t.id)) > state.ascend.points;
+    }
+  }
+  const spent = TREE.reduce((a, n) => a + treeRank(n.id) * n.cost + n.step * (treeRank(n.id) * (treeRank(n.id) - 1) / 2), 0);
+  $('tpoints').textContent = `${fmt(state.ascend.points)} pts spendable · ${fmt(spent)}/${TREE_TOTAL} invested`;
+}
+
 function paintPrestige() {
   const gain = ascendGain();
   const ready = gain > 0;
@@ -653,6 +773,7 @@ function render() {
     `${fmt(state.ascend.points)} pts · ${fmt(state.legacy.points)} legacy`;
   paintBuildings();
   paintUpgrades();
+  paintTree();
   paintPrestige();
 }
 
@@ -736,10 +857,84 @@ function doAscend() {
   toast(`Ascended. +${fmt(gain)} ascend point${gain === 1 ? '' : 's'}.`, 'good', 6000);
 }
 
+// ---------------------------------------------------------------- skill tree
+// Spent ascend points. Rank r costs `cost + (r-1)*step`, so the next rank out of a
+// node at `rank` costs `cost + rank*step`. Prereq depth is 1 on purpose: no graph,
+// no topological sort, no cycle handling.
+const TREE = [
+  { id:'C1', br:'click', name:'Reinforced Finger',  desc:'+50% click power',        cost:1,  step:1,  max:5 },
+  { id:'C2', br:'click', name:'Combo Memory',       desc:'clicks add 3% of cps',    cost:3,  step:2,  max:3 },
+  { id:'C3', br:'click', name:'Overclock',          desc:'x2 click for 3s after a click', cost:15, step:0, max:1 },
+  { id:'C4', br:'click', name:'Adrenal Surge',      desc:'x10 click for 3s every 30s', cost:40, step:0, max:1, star:true, req:'C2' },
+
+  { id:'A1', br:'auto',  name:'Servo Arm',          desc:'building cps x1.05',      cost:1,  step:1,  max:5 },
+  { id:'A2', br:'auto',  name:'Tree Rush',          desc:'buy selector applies to node ranks', cost:8, step:0, max:1 },
+  { id:'A3', br:'auto',  name:'Turbo Loop',         desc:'+20% cps',                cost:10, step:5,  max:3 },
+  { id:'A4', br:'auto',  name:'Auto-Invest',        desc:'every 10s buy the cheapest building', cost:45, step:0, max:1, star:true, req:'A3' },
+
+  { id:'E1', br:'econ',  name:'Discount Broker',    desc:'all coin costs x0.95',    cost:2,  step:2,  max:5 },
+  { id:'E2', br:'econ',  name:'Compound Interest',  desc:'cps x1.05 per min idle, to x5', cost:12, step:0, max:3 },
+  { id:'E3', br:'econ',  name:'Starting Capital',   desc:'start a run with 1000 x 2^rank', cost:3, step:3, max:5 },
+  { id:'E4', br:'econ',  name:'Gold Rush',          desc:'1% per tick: x50 burst',  cost:35, step:0,  max:1, star:true, req:'E3' },
+
+  { id:'U1', br:'util',  name:'Offline Boost',      desc:'offline rate +10%',       cost:4,  step:4,  max:5 },
+  { id:'U2', br:'util',  name:'Extended Window',    desc:'offline cap +4h',         cost:6,  step:6,  max:3 },
+  { id:'U3', br:'util',  name:'Time Insurance',     desc:'offline counts for ascend points', cost:6, step:0, max:1 },
+  { id:'U4', br:'util',  name:'Second Wind',        desc:'keep 5% of buildings on Ascend', cost:30, step:0, max:1, star:true, req:'U3' },
+
+  { id:'M1', br:'meta',  name:'Efficient Scarcity', desc:'ascend points +10%',      cost:20, step:10, max:3 },
+  { id:'M2', br:'meta',  name:'Golden Touch',       desc:'x5 click power, always',  cost:25, step:0,  max:1 },
+];
+const BRANCHES = [
+  ['click', '⚡ Click'], ['auto', '⟳ Auto'], ['econ', '◈ Economy'],
+  ['util', '◷ Utility'], ['meta', '✦ Meta'],
+];
+const TREE_TOTAL = TREE.reduce((a, n) => a + n.max * n.cost + n.step * (n.max * (n.max - 1) / 2), 0);
+
+const node = id => TREE.find(n => n.id === id);
+const treeLocked = n => n.req && treeRank(n.req) < 1;
+const treeMaxed = n => treeRank(n.id) >= n.max;
+
+function nodeCost(id, n) {
+  const t = node(id), rank = treeRank(id);
+  let sum = 0;
+  for (let k = 0; k < n; k++) sum += t.cost + (rank + k) * t.step;
+  return sum;
+}
+
+// A2 Tree Rush lets the 1/10/100/MAX selector buy ranks too. Without it a node click
+// is always exactly one rank.
+function nodeCount(id) {
+  const t = node(id), room = t.max - treeRank(id);
+  if (room <= 0) return 0;
+  if (!treeRank('A2')) return Math.min(1, room);
+  if (state.ui.buyAmount !== 'max') return Math.min(state.ui.buyAmount, room);
+  let n = 0, sum = 0;
+  while (n < room) {
+    const c = nodeCost(id, n + 1) - sum;
+    if (!isFinite(c) || sum + c > state.ascend.points) break;
+    sum += c;
+    n++;
+  }
+  return n;
+}
+
+function buyNode(id) {
+  const t = node(id);
+  if (!t || treeLocked(t) || treeMaxed(t)) return;
+  const n = nodeCount(id);
+  if (n <= 0) return;
+  const cost = nodeCost(id, n);
+  if (!isFinite(cost) || cost > state.ascend.points) return;
+  state.ascend.points -= cost;
+  state.tree[id] = treeRank(id) + n;
+  paintTree();
+}
+
 // ---------------------------------------------------------------- offline
-// U1 raises the rate and U2 raises the window; steps 6 and 7 wire them.
-const offlineRate = () => 0.5;
-const offlineCap = () => 8 * 3600 * 1000;
+// U1 and U2 raise these; U1 tops out at a 100% rate and U2 at 20h.
+const offlineRate = () => 0.5 + 0.1 * treeRank('U1') + (perkRank('L6') ? 0.25 : 0);
+const offlineCap = () => (8 + 4 * treeRank('U2')) * 3600 * 1000 * (perkRank('L6') ? 2 : 1);
 
 function applyOffline() {
   if (!state.lastSave) return;
@@ -748,9 +943,11 @@ function applyOffline() {
   calc();
   const away = Math.min(raw, offlineCap());
   const bonus = d.cps * away * offlineRate();
-  // Injected, not earned. Without U3 (step 6) offline time must not advance runEarned,
-  // or prestige points would be farmable by closing the tab for a while.
-  state.coins = Math.min(state.coins + bonus, CEIL);
+  // U3 (Time Insurance) is what makes offline count toward Ascend. Without it the award
+  // is injected and must skip runEarned, or prestige points become farmable by closing
+  // the tab. With it, offline is genuine income and goes through earn().
+  if (treeRank('U3')) earn(bonus);
+  else state.coins = Math.min(state.coins + bonus, CEIL);
   rt.offlineEarned = bonus;
   // Seed idle time from the same window that was paid out. idleMs lives in rt and is
   // never persisted, so without this E2 reads 0 on every load and is silently dead
@@ -840,6 +1037,7 @@ function boot() {
   applyOffline();
   rt.last = performance.now();
   buildBuildingsUI();
+  buildTreeUI();
   const bill = $('bill');
   bill.textContent = 'CLICK';
   bill.addEventListener('pointerdown', e => { e.preventDefault(); click(); });
