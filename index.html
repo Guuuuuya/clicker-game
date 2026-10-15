@@ -123,6 +123,29 @@ h2{
 #prestige{width:100%; max-width:420px}
 @media (prefers-reduced-motion: reduce){ #bill:active{transform:none} }
 
+/* ---- prestige (step 5) ---- */
+.pbar{
+  height:10px; background:var(--panel2); border:1px solid var(--line);
+  border-radius:6px; overflow:hidden; margin-bottom:var(--s2);
+}
+.pbar i{display:block; height:100%; width:0; background:var(--accent); transition:width .2s linear}
+.pbar.full i{background:var(--gold); box-shadow:var(--glow)}
+.prow{display:flex; align-items:center; gap:var(--s2); margin-top:var(--s1)}
+.pnum{font-size:13px; color:var(--dim)}
+.pgain{flex:1; font-size:13px}
+.bbtn{
+  padding:var(--s1) var(--s4); background:var(--panel2); border:1px solid var(--line);
+  border-radius:6px; cursor:pointer; font-size:14px;
+}
+.bbtn:hover:not(:disabled){border-width:2px; border-color:var(--gold); box-shadow:var(--glow)}
+.bbtn:active:not(:disabled){transform:translateY(1px)}
+.bbtn:disabled{opacity:.35; cursor:not-allowed}
+.pnote{margin:var(--s3) 0 0; font-size:12px; color:var(--dim)}
+@media (prefers-reduced-motion: reduce){
+  .pbar i{transition:none}
+  .bbtn:active:not(:disabled){transform:none}
+}
+
 /* ---- toasts (step 4) ---- */
 #toasts{
   position:fixed; left:50%; bottom:var(--s5); transform:translateX(-50%);
@@ -228,7 +251,13 @@ select.btn{padding-right:var(--s2)}
     <div id="bill" role="button" tabindex="0" aria-label="Click the bill to earn cookies"></div>
     <section id="prestige" class="panel">
       <h2>Prestige</h2>
-      <p class="empty">Step 5.</p>
+      <div class="pbar" id="pbar"><i></i></div>
+      <div class="prow"><span class="pnum num" id="pnum"></span></div>
+      <div class="prow">
+        <span class="pgain" id="pgain"></span>
+        <button class="bbtn" id="ascend" type="button">Ascend</button>
+      </div>
+      <p class="pnote" id="pnote"></p>
     </section>
   </div>
 
@@ -459,6 +488,7 @@ function clickPower() {
   if (has('u_c2')) p *= 2;
   if (has('u_c3')) p *= 3;
   if (has('u_c6')) p *= 10;
+  p *= ascendMult() * legacyMult();
   // Cloned Hands pays a share of cps per click. Additive, same reason as C2:
   // a multiplicative factor here would be self-referential and undefined.
   if (has('u_c5')) p += 0.01 * d.cps;
@@ -480,7 +510,10 @@ function calc() {
   if (has('u_g6')) cps *= 1 + state.coins / 1e7;
   if (has('u_g9')) cps *= 1 + totalBuildings() / 10;
   if (has('u_c4')) cps += 2;
-  // Prestige multipliers (steps 5/6/7), milk, seasons, achievements, frenzy fold in later.
+  // Prestige multipliers. They read `earned`, never the spendable `points` pool, so
+  // buying a tree node can never lower the player's multiplier.
+  cps *= ascendMult() * legacyMult();
+  // Milk, seasons, achievements and frenzy fold in at steps 6-9.
   d.cps = Math.min(cps, CEIL);
   d.clickPower = Math.min(clickPower(), CEIL);
 }
@@ -595,15 +628,112 @@ function paintUpgrades() {
   for (const u of list) ui2.ups.get(u.id).disabled = unlockCost(u) > state.coins;
 }
 
+function paintPrestige() {
+  const gain = ascendGain();
+  const ready = gain > 0;
+  const pct = Math.min(100, state.runEarned / ASCEND_AT * 100);
+  $('pbar').classList.toggle('full', ready);
+  $('pbar').firstElementChild.style.width = pct.toFixed(2) + '%';
+  $('pnum').textContent = `${fmt(state.runEarned)} of ${fmt(ASCEND_AT)} this run`;
+  $('pgain').textContent = ready
+    ? `Ascend now: +${fmt(gain)} point${gain === 1 ? '' : 's'}`
+    : `Ascend unlocks at ${fmt(ASCEND_AT)} earned this run`;
+  $('ascend').disabled = !ready;
+  $('pnote').textContent = state.ascend.runs === 0
+    ? 'Ascending resets cookies, buildings and upgrades. Skill tree and perks are kept.'
+    : `Ascends: ${state.ascend.runs} · ×${ascendMult().toFixed(1)} lifetime · Legacy arrives with step 7.`;
+}
+
 function render() {
   $('bal').textContent = fmt(state.coins);
   $('cps').textContent = fmt(d.cps);
   $('sub').textContent =
-    `${fmt(state.runEarned)} run · ×${(1 + 0.15 * state.ascend.earned).toFixed(1)} ascend · ` +
-    `×${(1 + 0.25 * state.legacy.earned).toFixed(1)} legacy · ` +
+    `${fmt(state.runEarned)} run · ×${ascendMult().toFixed(1)} ascend · ` +
+    `×${legacyMult().toFixed(1)} legacy · ` +
     `${fmt(state.ascend.points)} pts · ${fmt(state.legacy.points)} legacy`;
   paintBuildings();
   paintUpgrades();
+  paintPrestige();
+}
+
+// ---------------------------------------------------------------- ascend
+const ASCEND_AT = 1e6;
+const treeRank = id => state.tree[id] || 0;
+const perkRank = id => state.perks[id] || 0;
+const ascendMult = () => 1 + 0.15 * state.ascend.earned;
+const legacyMult = () => 1 + 0.25 * state.legacy.earned;
+
+// M1 and L7 are step 6 and 7; they read 0 until those land, and this needs no change.
+function ascendGain() {
+  if (state.runEarned < ASCEND_AT) return 0;
+  const m1 = treeRank('M1'), l7 = perkRank('L7');
+  return Math.floor(Math.sqrt(state.runEarned / ASCEND_AT) * (1 + 0.1 * m1) * (1 + 0.25 * l7));
+}
+
+// L8 (step 7) dissolves the reset entirely. Otherwise U4 keeps 5% and L4 keeps 25%.
+// Most expensive units first: keeping the cheap ones hands back count while barely
+// touching cps, which is not what the player paid points for.
+function keptBuildings() {
+  if (perkRank('L8')) return state.buildings.slice();
+  const pct = treeRank('U4') ? 0.05 : (perkRank('L4') ? 0.25 : 0);
+  let left = Math.floor(pct * totalBuildings());
+  if (left <= 0) return [0, 0, 0, 0, 0, 0];
+  const next = [0, 0, 0, 0, 0, 0];
+  const order = BUILDINGS.map((b, i) => i).sort((a, b) => BUILDINGS[b].baseCost - BUILDINGS[a].baseCost);
+  for (const i of order) {
+    const take = Math.min(state.buildings[i], left);
+    next[i] = take;
+    left -= take;
+    if (left <= 0) break;
+  }
+  return next;
+}
+
+// L3 (step 7) returns a random quarter of owned upgrades. Rounded up so a single
+// owned upgrade is not silently kept or silently lost.
+function keptUpgrades() {
+  if (!perkRank('L3')) return [];
+  const n = Math.ceil(0.25 * state.upgrades.length);
+  if (n <= 0) return [];
+  const pool = state.upgrades.slice();
+  const keep = [];
+  for (let i = 0; i < n && pool.length; i++) keep.push(pool.splice(Math.floor(Math.random() * pool.length), 1)[0]);
+  return keep;
+}
+
+function doAscend() {
+  const gain = ascendGain();
+  if (gain <= 0) return;
+  if (!confirm(
+    'Ascend?\n\n' +
+    'You lose your cookies, buildings and upgrades.\n' +
+    'You gain ' + fmt(gain) + ' ascend point' + (gain === 1 ? '' : 's') +
+    (treeRank('U4') || perkRank('L4') ? '\nSome of your buildings survive.' : '') +
+    '\n\nThis cannot be undone.'
+  )) return;
+
+  const keepB = keptBuildings();
+  const keepU = keptUpgrades();
+  // E3 (step 6) grants starting coins, at 1000 * 2^rank. It only applies once the node is
+  // actually owned — otherwise every ascend hands out its rank-0 value for free.
+  // Injected, so it is assigned directly and never goes through earn().
+  const e3 = treeRank('E3');
+  const start = e3 > 0 ? Math.min(1000 * Math.pow(2, e3), CEIL) : 0;
+
+  state.coins = start;
+  state.runEarned = 0;
+  state.buildings = keepB;
+  state.upgrades = keepU;
+  state.ascend.runs++;
+  state.ascend.points += gain;
+  state.ascend.earned += gain;
+  // clicks and totalEarned are lifetime and deliberately survive, so upgrade unlock
+  // conditions and achievements stay satisfied across ascends.
+  rt.last = performance.now();
+  calc();
+  save();
+  paintPrestige();
+  toast(`Ascended. +${fmt(gain)} ascend point${gain === 1 ? '' : 's'}.`, 'good', 6000);
 }
 
 // ---------------------------------------------------------------- offline
@@ -724,6 +854,7 @@ function boot() {
     });
   });
   $('ovlclose').addEventListener('click', closeOvl);
+  $('ascend').addEventListener('click', doAscend);
   $('ovl').addEventListener('click', e => { if (e.target === $('ovl')) closeOvl(); });
   window.addEventListener('keydown', e => {
     if (e.key === 'Escape' && !$('ovl').hidden) { closeOvl(); return; }
