@@ -111,17 +111,24 @@ h2{
 .uico:disabled{opacity:.35; cursor:not-allowed}
 @media (prefers-reduced-motion: reduce){ .uico:active:not(:disabled){transform:none} }
 
-/* ---- click target (canvas bill lands in step 10) ---- */
+/* ---- click target: canvas money bill (step 10) ---- */
+.billwrap{position:relative; width:240px; height:120px}
 #bill{
-  width:240px; height:120px; border-radius:8px; cursor:pointer; user-select:none;
-  display:flex; align-items:center; justify-content:center;
-  font-size:15px; letter-spacing:.2em; color:#e9fff0;
-  background:linear-gradient(#2f7d4f,#1f5c39);
-  border:3px solid #14402a; box-shadow:inset 0 0 0 6px #8fd6a833, inset 0 0 0 10px #8fd6a859;
+  width:240px; height:120px; border-radius:8px; cursor:pointer;
+  display:block; touch-action:manipulation;
 }
-#bill:active{transform:translateY(1px)}
+#bill:focus-visible{outline:2px solid var(--accent2); outline-offset:3px}
+#pops{position:absolute; inset:0; pointer-events:none; overflow:visible}
+.pop{
+  position:absolute; font-size:14px; font-weight:600; color:var(--good);
+  text-shadow:0 0 8px #000; white-space:nowrap; will-change:transform,opacity;
+  transform:translate(-50%,0);
+}
+.pop.big{color:var(--gold); font-size:17px}
+.pop.bad{color:var(--bad)}
+@keyframes rise{ to{ transform:translate(-50%,-60px); opacity:0 } }
+@media (prefers-reduced-motion: reduce){ .pop{ display:none } }
 #prestige{width:100%; max-width:420px}
-@media (prefers-reduced-motion: reduce){ #bill:active{transform:none} }
 
 /* ---- CC parity (step 9) ---- */
 .srow{display:flex; align-items:center; gap:var(--s2); margin-top:var(--s2); font-size:12px}
@@ -238,6 +245,13 @@ h2{
 .bbtn:active:not(:disabled){transform:translateY(1px)}
 .bbtn:disabled{opacity:.35; cursor:not-allowed}
 .pnote{margin:var(--s3) 0 0; font-size:12px; color:var(--dim)}
+.banner{
+  margin-top:var(--s2); padding:var(--s2) var(--s3); border-radius:8px;
+  font-size:12px; letter-spacing:.06em; border:1px solid var(--good);
+  background:color-mix(in srgb, var(--good) 14%, var(--panel2)); color:var(--text);
+}
+.banner.gold{border-color:var(--gold); background:color-mix(in srgb, var(--gold) 14%, var(--panel2))}
+.banner[hidden]{display:none}
 @media (prefers-reduced-motion: reduce){
   .pbar i{transition:none}
   .bbtn:active:not(:disabled){transform:none}
@@ -351,7 +365,11 @@ select.btn{padding-right:var(--s2)}
   </section>
 
   <div class="center">
-    <div id="bill" role="button" tabindex="0" aria-label="Click the bill to earn cookies"></div>
+    <div class="billwrap">
+      <canvas id="bill" width="240" height="120" role="button" tabindex="0"
+              aria-label="Click the bill to earn cookies"></canvas>
+      <div id="pops" aria-hidden="true"></div>
+    </div>
     <section id="prestige" class="panel">
       <h2>Prestige</h2>
       <div class="pbar" id="pbar"><i></i></div>
@@ -361,6 +379,7 @@ select.btn{padding-right:var(--s2)}
         <button class="bbtn" id="ascend" type="button">Ascend</button>
       </div>
       <p class="pnote" id="pnote"></p>
+      <div id="banners"></div>
     </section>
   </div>
 
@@ -548,6 +567,7 @@ function buyUpgrade(u) {
   if (has(u.id) || !isFinite(cost) || cost > state.coins) return;
   state.coins -= cost;
   state.upgrades.push(u.id);
+  sfx('upgrade');
   render();   // the icon goes now, not on the next tick
 }
 
@@ -595,6 +615,7 @@ function buyBuilding(i) {
   if (!isFinite(cost) || cost > state.coins) return;
   state.coins -= cost;
   state.buildings[i] += n;
+  sfx('building');
 }
 
 // ---------------------------------------------------------------- derived (never stored)
@@ -668,6 +689,9 @@ function earn(n) {
 
 function click() {
   const now = performance.now();
+  pulseAt = now;
+  sfx('click');
+  popup('+' + fmt(d.clickPower));
   rt.lastClick = now;
   rt.idleMs = 0;
   state.clicks++;
@@ -897,6 +921,16 @@ function paintLegacy() {
   $('lpoints').textContent = `${fmt(state.legacy.points)} pts · ${fmt(spent)}/${PERKS_TOTAL} invested`;
 }
 
+function paintBanners() {
+  const treeDone = TREE.every(n => treeRank(n.id) >= n.max);
+  const perksDone = PERKS.every(p => perkRank(p.id) >= p.max);
+  const host = $('banners');
+  if (!host) return;
+  host.innerHTML =
+    (treeDone ? '<div class="banner">SKILL TREE COMPLETE — ' + TREE_TOTAL + '/' + TREE_TOTAL + '</div>' : '') +
+    (perksDone ? '<div class="banner gold">ETERNAL — buildings are yours</div>' : '');
+}
+
 function paintPrestige() {
   const gain = ascendGain();
   const ready = gain > 0;
@@ -908,10 +942,16 @@ function paintPrestige() {
     ? `Ascend now: +${fmt(gain)} point${gain === 1 ? '' : 's'}`
     : `Ascend unlocks at ${fmt(ASCEND_AT)} earned this run`;
   $('ascend').disabled = !ready;
+  paintBanners();
   $('pnote').textContent = state.ascend.runs === 0
     ? 'Ascending resets cookies, buildings and upgrades. Skill tree and perks are kept.'
     : `Ascends: ${state.ascend.runs} · ×${ascendMult().toFixed(1)} lifetime` +
     (legacyUnlocked() ? ` · Legacy ${state.legacy.runs} · ×${legacyMult().toFixed(1)}` : ' · Legacy at 3 ascends');
+}
+
+function applyCompletion() {
+  const done = TREE.every(n => treeRank(n.id) >= n.max);
+  if (done && !/RAMBO FINANCIAL$/.test(document.title)) document.title = 'RAMBO FINANCIAL';
 }
 
 function render() {
@@ -927,6 +967,7 @@ function render() {
   paintPrestige();
   paintLegacy();
   paintParity();
+  applyCompletion();
   // Stats shows live numbers, so refresh it while open. The other panels are static
   // between unlocks and only rebuild when opened.
   if (ovlName === 'stats') {
@@ -1013,6 +1054,7 @@ function doAscend() {
   calc();
   save();
   paintPrestige();
+  sfx('ascend');
   toast(`Ascended. +${fmt(gain)} ascend point${gain === 1 ? '' : 's'}.`, 'good', 6000);
 }
 
@@ -1087,7 +1129,196 @@ function buyNode(id) {
   if (!isFinite(cost) || cost > state.ascend.points) return;
   state.ascend.points -= cost;
   state.tree[id] = treeRank(id) + n;
+  sfx('node');
   paintTree();
+}
+
+// ---------------------------------------------------------------- sound
+// WebAudio oscillators, no files. One context, created on the first user gesture
+// because the autoplay policy blocks it before that. Mute skips creation entirely,
+// so a muted player never pays for a context.
+let actx = null;
+const voices = {};
+function audio() {
+  if (state.ui.muted) return null;
+  if (!actx) { const AC = window.AudioContext || window.webkitAudioContext; if (!AC) return null; actx = new AC(); }
+  if (actx.state === 'suspended') actx.resume();
+  return actx;
+}
+const VOICE_CAP = 8;
+function tone(name, f0, f1, dur, gain, type, delay) {
+  const ctx = audio();
+  if (!ctx) return;
+  const list = voices[name] || (voices[name] = []);
+  // Hold-to-click fires ten clicks a second. Past the cap, drop the oldest rather than
+  // queueing, or the audio thread falls behind the sim.
+  while (list.length >= VOICE_CAP) { const old = list.shift(); try { old.stop(); } catch {} }
+  const t0 = ctx.currentTime + (delay || 0);
+  const osc = ctx.createOscillator(), g = ctx.createGain();
+  osc.type = type;
+  osc.frequency.setValueAtTime(f0, t0);
+  if (f1 && f1 !== f0) osc.frequency.exponentialRampToValueAtTime(Math.max(1, f1), t0 + dur);
+  g.gain.setValueAtTime(0.0001, t0);
+  g.gain.exponentialRampToValueAtTime(gain, t0 + 0.008);
+  g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+  osc.connect(g); g.connect(ctx.destination);
+  osc.start(t0); osc.stop(t0 + dur + 0.02);
+  list.push(osc);
+  osc.onended = () => { const i = list.indexOf(osc); if (i >= 0) list.splice(i, 1); };
+}
+const clickPitch = () => 1 + 0.25 * Math.min(6, Math.log10(Math.max(1, d.clickPower)));
+const SFX = {
+  click:      () => tone('click', 220 * clickPitch(), 0, 0.06, 0.05, 'triangle'),
+  building:   () => tone('building', 330, 494, 0.12, 0.07, 'triangle'),
+  upgrade:    () => tone('upgrade', 523, 784, 0.14, 0.08, 'triangle'),
+  node:       () => { tone('node', 392, 587, 0.22, 0.08, 'triangle'); tone('node', 880, 0, 0.12, 0.06, 'triangle', 0.1); },
+  achievement:() => tone('ach', 659, 988, 0.28, 0.06, 'sawtooth'),
+  golden:     () => { tone('gold', 880, 0, 0.08, 0.05, 'square'); tone('gold', 880, 0, 0.08, 0.05, 'square', 0.06); },
+  ascend:     () => tone('ascend', 130, 65, 0.9, 0.09, 'sawtooth'),
+  legacy:     () => { tone('legacy', 98, 196, 1.4, 0.1, 'sawtooth'); },
+  error:      () => tone('err', 110, 0, 0.15, 0.06, 'square'),
+};
+const sfx = n => { try { (SFX[n] || SFX.error)(); } catch {} };
+
+// ---------------------------------------------------------------- float popups
+const popPool = [];
+const reducedMotion = () => window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+function popup(text, kind) {
+  if (reducedMotion()) return;
+  const host = $('pops');
+  if (!host) return;
+  const el = popPool.pop() || (() => {
+    const n = document.createElement('div');
+    n.className = 'pop';
+    return n;
+  })();
+  el.className = 'pop' + (kind ? ' ' + kind : '');
+  el.textContent = text;
+  el.style.left = 100 + (Math.random() * 80 - 40) + 'px';
+  el.style.top = 40 + (Math.random() * 40 - 20) + 'px';
+  el.style.opacity = '1';
+  if (el.parentNode !== host) host.append(el);
+  if (!el._wired) { el._wired = true; }
+  el.style.animation = 'none';
+  void el.offsetWidth;
+  el.style.animation = 'rise .7s ease-out forwards';
+  clearTimeout(el._t);
+  el._t = setTimeout(() => {
+    el.style.animation = 'none';
+    if (host.children.length > 12) el.remove(); else popPool.push(el);
+  }, 700);
+  // Hard cap: never more than 12 nodes on screen, however fast the player clicks.
+  while (host.children.length > 12) host.firstElementChild.remove();
+}
+
+// ---------------------------------------------------------------- canvas bill
+const BILL = { w: 240, h: 120 };
+let billCtx = null, bodyGrad = null, pulseAt = 0;
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.arcTo(x + w, y, x + w, y + h, r);
+  ctx.arcTo(x + w, y + h, x, y + h, r);
+  ctx.arcTo(x, y + h, x, y, r);
+  ctx.arcTo(x, y, x + w, y, r);
+  ctx.closePath();
+}
+
+function drawBill() {
+  const cv = $('bill');
+  if (!cv || !cv.getContext) return;
+  if (!billCtx) {
+    const dpr = window.devicePixelRatio || 1;
+    cv.width = BILL.w * dpr;
+    cv.height = BILL.h * dpr;
+    billCtx = cv.getContext('2d');
+    if (billCtx) billCtx.scale(dpr, dpr);
+    bodyGrad = billCtx ? billCtx.createLinearGradient(0, 0, 0, BILL.h) : null;
+  }
+  const ctx = billCtx;
+  if (!ctx) return;
+  const { w, h } = BILL;
+  if (bodyGrad) {
+    bodyGrad.addColorStop(0, '#2f7d4f');
+    bodyGrad.addColorStop(1, '#1f5c39');
+  }
+  ctx.clearRect(0, 0, w, h);
+
+  const now = performance.now();
+  const age = now - pulseAt;
+  const pulse = age < 140 ? 1 - 0.06 * (1 - age / 140) : 1;
+
+  ctx.save();
+  ctx.translate(w / 2, h / 2);
+  ctx.scale(pulse, pulse);
+  ctx.translate(-w / 2, -h / 2);
+
+  // body
+  roundRect(ctx, 1.5, 1.5, w - 3, h - 3, 8);
+  ctx.fillStyle = bodyGrad || '#2f7d4f';
+  ctx.fill();
+  ctx.lineWidth = 3;
+  ctx.strokeStyle = '#14402a';
+  ctx.stroke();
+
+  // double border, banknote style
+  ctx.lineWidth = 1.5;
+  ctx.strokeStyle = 'rgba(143,214,168,0.6)';
+  roundRect(ctx, 6, 6, w - 12, h - 12, 5); ctx.stroke();
+  ctx.lineWidth = 1;
+  ctx.strokeStyle = 'rgba(143,214,168,0.35)';
+  roundRect(ctx, 10, 10, w - 20, h - 20, 4); ctx.stroke();
+
+  // portrait: oval with a head and shoulders cut out
+  ctx.fillStyle = '#14402a';
+  ctx.beginPath();
+  ctx.ellipse(w / 2, h / 2, 26, 32, 0, 0, Math.PI * 2);
+  ctx.fill();
+  ctx.fillStyle = '#2f7d4f';
+  ctx.beginPath(); ctx.arc(w / 2, h / 2 - 7, 9, 0, Math.PI * 2); ctx.fill();
+  ctx.beginPath(); ctx.ellipse(w / 2, h / 2 + 15, 16, 12, 0, Math.PI, 0); ctx.fill();
+
+  // corner numerals
+  ctx.fillStyle = '#e9fff0';
+  ctx.font = '28px Georgia, serif';
+  ctx.textBaseline = 'top';
+  ctx.fillText('1', 12, 10);
+  ctx.fillText('1', w - 24, 10);
+  ctx.fillText('1', 12, h - 34);
+  ctx.fillText('1', w - 24, h - 34);
+
+  // micro-text rules
+  ctx.strokeStyle = 'rgba(233,255,240,0.25)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(34, 16); ctx.lineTo(w - 34, 16);
+  ctx.moveTo(34, h - 16); ctx.lineTo(w - 34, h - 16);
+  ctx.stroke();
+
+  // shimmer, clipped to the bill. Decorative, so reduced motion simply stops it.
+  if (!reducedMotion()) {
+    const sweep = ((now % 3000) / 3000) * (w + 120) - 60;
+    const g2 = ctx.createLinearGradient(sweep - 40, 0, sweep + 40, h);
+    g2.addColorStop(0, 'rgba(255,255,255,0)');
+    g2.addColorStop(0.5, 'rgba(255,255,255,0.10)');
+    g2.addColorStop(1, 'rgba(255,255,255,0)');
+    ctx.save();
+    roundRect(ctx, 1.5, 1.5, w - 3, h - 3, 8);
+    ctx.clip();
+    ctx.fillStyle = g2;
+    ctx.fillRect(0, 0, w, h);
+    ctx.restore();
+  }
+
+  // frenzy rim: the x7 is otherwise invisible
+  if (frenzyOn()) {
+    ctx.lineWidth = 4;
+    ctx.strokeStyle = '#ffcc4d';
+    roundRect(ctx, 2, 2, w - 4, h - 4, 8);
+    ctx.stroke();
+  }
+  ctx.restore();
 }
 
 // ---------------------------------------------------------------- CC parity
@@ -1167,12 +1398,14 @@ function spawnGolden() {
   const w = Math.max(1, host.clientWidth - 34), h = Math.max(1, host.clientHeight - 34);
   el.style.left = Math.random() * w + 'px';
   el.style.top = Math.random() * h + 'px';
+  if (reducedMotion()) el.style.transition = 'none';
   el.addEventListener('pointerdown', e => {
     e.stopPropagation();
     el.remove();
     let r = Math.random() * 100, pick = GOLDEN_PRIZES[0];
     for (const p of GOLDEN_PRIZES) { if (r < p.w) { pick = p; break; } r -= p.w; }
     try { pick.run(); } catch {}
+    sfx('golden');
     toast(pick.label, 'good', 5000);
   });
   host.append(el);
@@ -1217,6 +1450,7 @@ function checkAchievements() {
     if (!hit) continue;
     state.ach[a.id] = true;
     if (a.pts) state.ascend.points += a.pts;
+    sfx('achievement');
     toast(`${a.name} — ${a.pts ? '+' + a.pts + ' ascend points' : '×' + a.mult + ' to all gains'}`, 'good', 6000);
   }
 }
@@ -1456,6 +1690,7 @@ function buyPerk(id) {
   if (!isFinite(cost) || cost > state.legacy.points) return;
   state.legacy.points -= cost;
   state.perks[id] = perkRank(id) + n;
+  sfx('node');
   calc();
   paintLegacy();
 }
@@ -1488,6 +1723,7 @@ function doLegacy() {
   calc();
   save();
   render();
+  sfx('legacy');
   toast(`Legacy entered. +${fmt(gain)} legacy point${gain === 1 ? '' : 's'}. Buildings kept.`, 'good', 6000);
 }
 
@@ -1557,6 +1793,7 @@ function wirePrefs() {
     applyTheme();
     save();
   });
+  $('ptmute').addEventListener('change', e => { state.ui.muted = !e.target.checked; save(); });
   $('ptexp').addEventListener('click', exportSave);
   $('ptimp').addEventListener('click', () => $('ptfile').click());
   $('ptfile').addEventListener('change', e => {
@@ -1580,6 +1817,9 @@ function openOvl(name) {
         '<select class="btn" id="ptheme">' +
           THEMES.map(t => `<option value="${t}"${state.ui.theme === t ? ' selected' : ''}>${t}</option>`).join('') +
         '</select></div>' +
+      '<div class="ovlrow"><label for="ptmute">Sound' +
+        `<span class="hint">WebAudio blips, no audio files</span></label>` +
+        '<input type="checkbox" id="ptmute"' + (state.ui.muted ? '' : ' checked') + '></div>' +
       '<div class="ovlrow"><label>Save data' +
         `<span class="hint">key <code>${KEY}</code>${lsOK ? '' : ' &mdash; memory only, will not survive a reload'}</span>` +
         '</label><button class="btn" id="ptexp" type="button">Export</button>' +
@@ -1643,7 +1883,6 @@ function boot() {
   buildTreeUI();
   buildLegacyUI();
   const bill = $('bill');
-  bill.textContent = 'CLICK';
   bill.addEventListener('pointerdown', e => { e.preventDefault(); click(); checkFrenzyClicks(); });
   bill.addEventListener('keydown', e => {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); click(); checkFrenzyClicks(); }
@@ -1677,7 +1916,7 @@ setInterval(() => { tick(); render(); }, 250);
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'hidden') save();
   });
-  (function frame() { render(); requestAnimationFrame(frame); })();
+  (function frame() { render(); drawBill(); requestAnimationFrame(frame); })();
 
   if (!lsOK) {
     $('warn').hidden = false;
