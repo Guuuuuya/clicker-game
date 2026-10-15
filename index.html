@@ -123,6 +123,22 @@ h2{
 #prestige{width:100%; max-width:420px}
 @media (prefers-reduced-motion: reduce){ #bill:active{transform:none} }
 
+/* ---- achievements + stats (step 8) ---- */
+.agrid{display:grid; grid-template-columns:1fr 1fr; gap:var(--s2); margin-top:var(--s2)}
+.acard{
+  display:flex; gap:var(--s2); padding:var(--s2); border-radius:8px;
+  border:1px solid var(--line); background:var(--panel2); font-size:12px;
+}
+.acard.got{border-color:var(--good)}
+.acard .ai{font-size:20px; line-height:1.2; flex-shrink:0}
+.acard.locked{opacity:.4}
+.acard .an{font-weight:600}
+.acard .ad{color:var(--dim); font-size:11px}
+.acard .ar{color:var(--gold); font-size:11px}
+.statrow{display:flex; justify-content:space-between; gap:var(--s3); padding:3px 0; font-size:13px}
+.statrow .k{color:var(--dim)}
+.statrow .v{font-variant-numeric:tabular-nums}
+
 /* ---- legacy (step 7) ---- */
 #legacy[hidden]{display:none}
 .lrow{display:flex; align-items:center; gap:var(--s2); margin-top:var(--s2)}
@@ -346,6 +362,7 @@ const DEFAULTS = {
   milk: { progress: 0, rank: 0, lifetime: 0 },
   seasons: [],
   ui: { theme: 'neon', muted: false, buyAmount: 1, bannerDismissed: false, persistent: true },
+  played: 0,
   lastSave: 0,
 };
 
@@ -542,7 +559,7 @@ function clickPower() {
   if (has('u_c2')) p *= 2;
   if (has('u_c3')) p *= 3;
   if (has('u_c6')) p *= 10;
-  p *= ascendMult() * legacyMult();
+  p *= ascendMult() * legacyMult() * achBonus();
   // Cloned Hands pays a share of cps per click. Additive, same reason as C2:
   // a multiplicative factor here would be self-referential and undefined.
   if (has('u_c5')) p += 0.01 * d.cps;
@@ -570,6 +587,7 @@ function calc() {
   if (has('u_g6')) cps *= 1 + state.coins / 1e7;
   if (has('u_g9')) cps *= 1 + totalBuildings() / 10;
   if (has('u_c4')) cps += 2;
+  cps *= achBonus();
   // Skill tree: A1 compounds per rank, A3 is additive, E2 compounds with idle time and
   // caps at x5 so it cannot run away during a long absence.
   cps *= Math.pow(1.05, treeRank('A1')) * (1 + 0.2 * treeRank('A3'));
@@ -603,6 +621,7 @@ function click() {
   rt.idleMs = 0;
   state.clicks++;
   earn(d.clickPower);
+  checkAchievements();
 }
 
 // ---------------------------------------------------------------- tick
@@ -612,7 +631,9 @@ function tick() {
   const dt = clamp(now - rt.last, 0, 60000);
   rt.last = now;
   rt.idleMs += dt;
+  state.played = Math.min((state.played || 0) + dt, CEIL);
   calc();
+  checkAchievements();
   // Passive income goes through earn(). Crediting state.coins directly would leave
   // runEarned and totalEarned untouched, which zeroes out Ascend points and makes
   // u_g6's totalEarned >= 1e7 unlock permanently unreachable.
@@ -848,6 +869,9 @@ function render() {
   paintTree();
   paintPrestige();
   paintLegacy();
+  // Stats shows live numbers, so refresh it while open. The other panels are static
+  // between unlocks and only rebuild when opened.
+  if (ovlName === 'stats') $('statbody').innerHTML = statsBody();
 }
 
 // ---------------------------------------------------------------- ascend
@@ -1002,6 +1026,84 @@ function buyNode(id) {
   state.ascend.points -= cost;
   state.tree[id] = treeRank(id) + n;
   paintTree();
+}
+
+// ---------------------------------------------------------------- achievements
+// Multiplier rewards multiply together; point rewards go straight into the spendable
+// pool. All ten multiplier rewards maxed gives x12.82, not the x24 first assumed.
+const ACHIEVEMENTS = [
+  { id:'a1',  name:'First Blood',      icon:'🩸', desc:'click the bill once',            check:s=>s.clicks>=1,        mult:1.05 },
+  { id:'a2',  name:'Finger Gymnastics',icon:'🤸', desc:'100 clicks',                     check:s=>s.clicks>=100,      mult:1.10 },
+  { id:'a3',  name:'Clicker of the Hour',icon:'⏱️', desc:'1,000 clicks',                check:s=>s.clicks>=1000,     mult:1.15 },
+  { id:'a4',  name:'Ten Thousand Down',icon:'🎟️', desc:'earn 10,000 lifetime',            check:s=>s.totalEarned>=1e4, mult:1.20 },
+  { id:'a5',  name:'Ascendant',        icon:'🗿', desc:'earn 1B lifetime',               check:s=>s.totalEarned>=1e9, mult:1.50 },
+  { id:'a6',  name:'Automation Era',   icon:'🏭', desc:'own 10 buildings',               check:s=>totalBuildings()>=10, mult:1.10 },
+  { id:'a7',  name:'Industrialist',    icon:'🌆', desc:'own 50 buildings',               check:s=>totalBuildings()>=50, mult:1.30 },
+  { id:'a8',  name:'Touch Grass',      icon:'🌱', desc:'Ascend once',                    check:s=>s.ascend.runs>=1,   pts:5 },
+  { id:'a9',  name:'Reborn',           icon:'🔁', desc:'Ascend 10 times',                check:s=>s.ascend.runs>=10,  pts:15 },
+  { id:'a10', name:'Tree Touched',     icon:'🌲', desc:'any tree node at rank 3',        check:()=>TREE.some(n=>treeRank(n.id)>=3), mult:1.25 },
+  { id:'a11', name:'Completionist',    icon:'👑', desc:'C1, A1, E1 and U1 all bought',   check:()=>['C1','A1','E1','U1'].every(id=>treeRank(id)>=1), mult:2 },
+  { id:'a12', name:'Offline Rich',     icon:'💤', desc:'earn 1M while away',             check:()=>rt.offlineEarned>=1e6, mult:1.50 },
+];
+
+// Twelve multiplies at four ticks a second is nothing, so this is recomputed in
+// calc() rather than cached with an invalidation path to keep bug-free.
+const achBonus = () => ACHIEVEMENTS.reduce((a, x) => x.mult && state.ach[x.id] ? a * x.mult : a, 1);
+const achUnlocked = () => ACHIEVEMENTS.filter(a => state.ach[a.id]).length;
+
+function checkAchievements() {
+  for (const a of ACHIEVEMENTS) {
+    if (state.ach[a.id]) continue;
+    let hit = false;
+    try { hit = !!a.check(state); } catch { hit = false; }
+    if (!hit) continue;
+    state.ach[a.id] = true;
+    if (a.pts) state.ascend.points += a.pts;
+    toast(`${a.name} — ${a.pts ? '+' + a.pts + ' ascend points' : '×' + a.mult + ' to all gains'}`, 'good', 6000);
+  }
+}
+
+// ---------------------------------------------------------------- panels
+function statsBody() {
+  const rows = [
+    ['Time played', fmtDur(state.played)],
+    ['Clicks', fmt(state.clicks)],
+    ['Cookies now', fmt(state.coins)],
+    ['This run', fmt(state.runEarned)],
+    ['Lifetime earned', fmt(state.totalEarned)],
+    ['Per second', fmt(d.cps)],
+    ['Click power', fmt(d.clickPower)],
+    ['Buildings', `${fmt(totalBuildings())} (cap ${CAP} each)`],
+    ['Upgrades held', `${state.upgrades.length}`],
+    ['Ascends', `${state.ascend.runs} · ×${ascendMult().toFixed(1)}`],
+    ['Legacy runs', legacyUnlocked() ? `${state.legacy.runs} · ×${legacyMult().toFixed(1)}` : 'locked'],
+    ['Ascend points', `${fmt(state.ascend.points)} · ${fmt(state.ascend.earned)} earned`],
+    ['Legacy points', `${fmt(state.legacy.points)} · ${fmt(state.legacy.earned)} earned`],
+    ['Skill tree', `${TREE.reduce((a,n)=>a+treeRank(n.id),0)} / ${TREE_TOTAL}`],
+    ['Legacy perks', `${PERKS.reduce((a,p)=>a+perkRank(p.id),0)} / ${PERKS_TOTAL}`],
+    ['Achievements', `${achUnlocked()} / ${ACHIEVEMENTS.length} · ×${achBonus().toFixed(2)}`],
+  ];
+  return rows.map(([k, v]) =>
+    `<div class="statrow"><span class="k">${k}</span><span class="v">${v}</span></div>`).join('');
+}
+
+function achBody() {
+  return ACHIEVEMENTS.map(a => {
+    const got = !!state.ach[a.id];
+    const reward = a.pts ? `+${a.pts} ascend pts` : `×${a.mult} all gains`;
+    return '<div class="acard' + (got ? ' got' : ' locked') + '">' +
+      `<span class="ai">${got ? a.icon : '?'}</span><span>` +
+      `<span class="an">${got ? a.name : '???'}</span><br>` +
+      `<span class="ad">${got ? a.desc : 'locked'}</span>` +
+      (got ? ` <span class="ar">${reward}</span>` : '') +
+      '</span></div>';
+  }).join('');
+}
+
+function fmtDur(ms) {
+  const s = Math.floor(ms / 1000);
+  const h = Math.floor(s / 3600), m = Math.floor((s % 3600) / 60);
+  return h ? `${h}h ${m}m` : `${m}m ${s % 60}s`;
 }
 
 // ---------------------------------------------------------------- legacy
@@ -1165,7 +1267,8 @@ function wirePrefs() {
 
 let ovlName = null;
 function openOvl(name) {
-  if (name !== ovlName) {
+  const titles = { stats: 'Stats', ach: 'Achievements', prefs: 'Preferences' };
+  if (name === 'prefs') {
     $('ovlbody').innerHTML =
       '<div class="ovlrow"><label for="ptheme">Theme</label>' +
         '<select class="btn" id="ptheme">' +
@@ -1178,9 +1281,13 @@ function openOvl(name) {
         '<input type="file" id="ptfile" accept="application/json,.json" hidden></div>' +
       '<div class="ovlrow"><label>Hard reset<span class="hint">Deletes everything. No undo.</span></label>' +
         '<button class="btn danger" id="ptreset" type="button">Reset</button></div>';
-    $('ovltitle').textContent = 'Preferences';
     wirePrefs();
+  } else if (name === 'ach') {
+    $('ovlbody').innerHTML = '<div class="agrid">' + achBody() + '</div>';
+  } else {
+    $('ovlbody').innerHTML = '<div id="statbody">' + statsBody() + '</div>';
   }
+  $('ovltitle').textContent = titles[name] || 'Preferences';
   ovlName = name;
   $('ovl').hidden = false;
 }
@@ -1204,10 +1311,7 @@ function boot() {
   });
   document.querySelectorAll('.tabs button').forEach(b => {
     b.removeAttribute('aria-disabled');
-    b.addEventListener('click', () => {
-      if (b.dataset.panel === 'prefs') openOvl('prefs');
-      else toast('That panel arrives with step 8.', '', 2500);
-    });
+    b.addEventListener('click', () => openOvl(b.dataset.panel));
   });
   $('ovlclose').addEventListener('click', closeOvl);
   $('ascend').addEventListener('click', doAscend);
