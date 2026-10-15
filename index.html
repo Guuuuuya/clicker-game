@@ -123,6 +123,64 @@ h2{
 #prestige{width:100%; max-width:420px}
 @media (prefers-reduced-motion: reduce){ #bill:active{transform:none} }
 
+/* ---- toasts (step 4) ---- */
+#toasts{
+  position:fixed; left:50%; bottom:var(--s5); transform:translateX(-50%);
+  display:flex; flex-direction:column; align-items:center; gap:var(--s2);
+  z-index:60; pointer-events:none; max-width:min(92vw,560px);
+}
+.toast{
+  background:var(--panel2); border:1px solid var(--accent); border-radius:8px;
+  padding:var(--s2) var(--s4); box-shadow:var(--glow); font-size:13px;
+  text-align:center;
+}
+.toast.warn{border-color:var(--bad)}
+.toast.good{border-color:var(--good)}
+
+/* ---- overlay panels (step 4) ---- */
+.ovl{
+  position:fixed; inset:0; background:#000000b8; z-index:70;
+  display:flex; align-items:flex-start; justify-content:center;
+  padding:var(--s5); overflow:auto;
+}
+.ovl[hidden]{display:none}
+.ovlbox{
+  background:var(--panel); border:1px solid var(--line); border-radius:12px;
+  padding:var(--s5); width:min(560px,100%); box-shadow:var(--glow);
+}
+.ovlhead{display:flex; align-items:center; margin-bottom:var(--s4)}
+.ovlhead h2{margin:0}
+.ovlclose{
+  margin-left:auto; width:30px; height:30px; line-height:1; background:var(--panel2);
+  border:1px solid var(--line); border-radius:6px; cursor:pointer;
+}
+.ovlrow{
+  display:flex; align-items:center; gap:var(--s3); padding:var(--s2) 0;
+  border-top:1px solid var(--line);
+}
+.ovlrow:first-of-type{border-top:none}
+.ovlrow label{flex:1}
+.ovlrow .hint{font-size:12px; color:var(--dim); flex-basis:100%; margin-top:2px}
+.btn{
+  padding:var(--s1) var(--s3); background:var(--panel2); border:1px solid var(--line);
+  border-radius:6px; cursor:pointer; font-size:13px;
+}
+.btn:hover:not(:disabled){border-width:2px; border-color:var(--accent); box-shadow:var(--glow)}
+.btn:active:not(:disabled){transform:translateY(1px)}
+.btn:disabled{opacity:.35; cursor:not-allowed}
+.btn.danger:hover:not(:disabled){border-color:var(--bad)}
+select.btn{padding-right:var(--s2)}
+
+/* ---- storage warning (step 4) ---- */
+#warn{
+  background:color-mix(in srgb, var(--bad) 18%, var(--panel));
+  border-bottom:1px solid var(--bad); padding:var(--s2) var(--s5);
+  font-size:13px; color:var(--text);
+}
+#warn[hidden]{display:none}
+
+@media (prefers-reduced-motion: reduce){ .btn:active:not(:disabled){transform:none} }
+
 @media (max-width:1200px){
   main{grid-template-columns:300px 1fr 300px}
   #upgrades{grid-column:1; grid-row:2; flex-direction:row}
@@ -139,6 +197,8 @@ h2{
 </style>
 </head>
 <body>
+
+<div id="warn" role="status" hidden></div>
 
 <header>
   <div class="hrow">
@@ -178,6 +238,18 @@ h2{
   </section>
 </main>
 
+<div id="toasts" aria-live="polite"></div>
+
+<div class="ovl" id="ovl" hidden>
+  <div class="ovlbox" role="dialog" aria-modal="true" aria-labelledby="ovltitle">
+    <div class="ovlhead">
+      <h2 id="ovltitle">Preferences</h2>
+      <button type="button" class="ovlclose" id="ovlclose" aria-label="Close">&times;</button>
+    </div>
+    <div id="ovlbody"></div>
+  </div>
+</div>
+
 <script>
 'use strict';
 
@@ -200,6 +272,58 @@ const DEFAULTS = {
 };
 
 const state = structuredClone(DEFAULTS);
+
+// ---------------------------------------------------------------- storage
+// Firefox denies localStorage on file:// and Safari does the same in private mode.
+// Without this shim the first getItem throws and the game never renders, so every
+// access goes through store and never touches localStorage directly.
+const SAVE_VERSION = 1;
+const mem = new Map();
+const lsOK = (() => {
+  try {
+    localStorage.setItem('__p', '1');
+    localStorage.removeItem('__p');
+    return true;
+  } catch { return false; }
+})();
+const store = {
+  get: k => lsOK ? localStorage.getItem(k) : (mem.get(k) ?? null),
+  set: (k, v) => { if (lsOK) { try { localStorage.setItem(k, v); } catch {} } else mem.set(k, v); },
+  del: k => { if (lsOK) { try { localStorage.removeItem(k); } catch {} } else mem.delete(k); },
+};
+state.ui.persistent = lsOK;
+
+function save() {
+  state.lastSave = Date.now();
+  store.set(KEY, JSON.stringify({ v: SAVE_VERSION, state }));
+}
+
+// Returns true if a save was applied. Never overwrites a save it did not understand.
+function load() {
+  const raw = store.get(KEY);
+  if (!raw) return false;
+  let data;
+  try { data = JSON.parse(raw); } catch { return false; }
+  if (!data || typeof data !== 'object') return false;
+  if (typeof data.v === 'number' && data.v > SAVE_VERSION) {
+    toast(`Save is version ${data.v}, this build understands ${SAVE_VERSION}. Not loading it.`, 'warn', 9000);
+    return false;
+  }
+  const src = data.state || {};
+  for (const k of Object.keys(state)) {
+    if (src[k] !== undefined) state[k] = src[k];
+  }
+  return true;
+}
+
+// ---------------------------------------------------------------- toasts
+function toast(msg, kind = '', ms = 4000) {
+  const el = document.createElement('div');
+  el.className = 'toast' + (kind ? ' ' + kind : '');
+  el.textContent = msg;
+  $('toasts').append(el);
+  setTimeout(() => el.remove(), ms);
+}
 
 // Runtime-only. Never persisted: anything a reload could reset for free lives here.
 const rt = { last: 0, idleMs: 0, lastClick: 0, investAcc: 0, offlineEarned: 0 };
@@ -482,9 +606,108 @@ function render() {
   paintUpgrades();
 }
 
+// ---------------------------------------------------------------- offline
+// U1 raises the rate and U2 raises the window; steps 6 and 7 wire them.
+const offlineRate = () => 0.5;
+const offlineCap = () => 8 * 3600 * 1000;
+
+function applyOffline() {
+  if (!state.lastSave) return;
+  const raw = Date.now() - state.lastSave;
+  if (raw <= 0) return;            // first ever boot, or the clock moved backwards
+  calc();
+  const away = Math.min(raw, offlineCap());
+  const bonus = d.cps * away * offlineRate();
+  // Injected, not earned. Without U3 (step 6) offline time must not advance runEarned,
+  // or prestige points would be farmable by closing the tab for a while.
+  state.coins = Math.min(state.coins + bonus, CEIL);
+  rt.offlineEarned = bonus;
+  // Seed idle time from the same window that was paid out. idleMs lives in rt and is
+  // never persisted, so without this E2 reads 0 on every load and is silently dead
+  // offline. Capped at the same window so you never compound time you were not paid for.
+  rt.idleMs += away;
+  if (bonus > 0) toast(`While you were away: +${fmt(bonus)} cookies`, 'good', 7000);
+  if (raw > offlineCap()) toast(`Offline capped at ${Math.round(offlineCap() / 3600000)}h.`, 'warn', 7000);
+}
+
+// ---------------------------------------------------------------- preferences
+const applyTheme = () => { document.documentElement.dataset.theme = state.ui.theme; };
+const THEMES = ['neon', 'matrix', 'mono'];
+
+function exportSave() {
+  const blob = new Blob([JSON.stringify({ v: SAVE_VERSION, state }, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'clicker-save.json';
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+function importSave(file) {
+  file.text().then(txt => {
+    let data;
+    try { data = JSON.parse(txt); } catch { return toast('That file is not valid JSON.', 'warn'); }
+    if (!data || typeof data !== 'object' || !data.state || typeof data.state !== 'object') {
+      return toast('That file is not a clicker save.', 'warn');
+    }
+    if (typeof data.v === 'number' && data.v > SAVE_VERSION) {
+      return toast(`Save is version ${data.v}; this build only understands ${SAVE_VERSION}.`, 'warn', 8000);
+    }
+    if (!confirm('Replace your current save? This cannot be undone.')) return;
+    store.set(KEY, JSON.stringify({ v: SAVE_VERSION, state: data.state }));
+    location.reload();
+  });
+}
+
+function wirePrefs() {
+  $('ptheme').addEventListener('change', e => {
+    state.ui.theme = e.target.value;
+    applyTheme();
+    save();
+  });
+  $('ptexp').addEventListener('click', exportSave);
+  $('ptimp').addEventListener('click', () => $('ptfile').click());
+  $('ptfile').addEventListener('change', e => {
+    if (e.target.files[0]) importSave(e.target.files[0]);
+    e.target.value = '';
+  });
+  $('ptreset').addEventListener('click', () => {
+    if (!confirm('Delete all progress? This cannot be undone.')) return;
+    if (!confirm('Really delete everything? Buildings, upgrades, ascends, all of it.')) return;
+    store.del(KEY);
+    location.reload();
+  });
+}
+
+let ovlName = null;
+function openOvl(name) {
+  if (name !== ovlName) {
+    $('ovlbody').innerHTML =
+      '<div class="ovlrow"><label for="ptheme">Theme</label>' +
+        '<select class="btn" id="ptheme">' +
+          THEMES.map(t => `<option value="${t}"${state.ui.theme === t ? ' selected' : ''}>${t}</option>`).join('') +
+        '</select></div>' +
+      '<div class="ovlrow"><label>Save data' +
+        `<span class="hint">key <code>${KEY}</code>${lsOK ? '' : ' &mdash; memory only, will not survive a reload'}</span>` +
+        '</label><button class="btn" id="ptexp" type="button">Export</button>' +
+        '<button class="btn" id="ptimp" type="button">Import</button>' +
+        '<input type="file" id="ptfile" accept="application/json,.json" hidden></div>' +
+      '<div class="ovlrow"><label>Hard reset<span class="hint">Deletes everything. No undo.</span></label>' +
+        '<button class="btn danger" id="ptreset" type="button">Reset</button></div>';
+    $('ovltitle').textContent = 'Preferences';
+    wirePrefs();
+  }
+  ovlName = name;
+  $('ovl').hidden = false;
+}
+function closeOvl() { $('ovl').hidden = true; ovlName = null; }
+
 // ---------------------------------------------------------------- boot
 function boot() {
+  load();                    // must precede calc(): cps depends on loaded buildings
   calc();
+  applyTheme();
+  applyOffline();
   rt.last = performance.now();
   buildBuildingsUI();
   const bill = $('bill');
@@ -493,18 +716,43 @@ function boot() {
   bill.addEventListener('keydown', e => {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); click(); }
   });
+  document.querySelectorAll('.tabs button').forEach(b => {
+    b.removeAttribute('aria-disabled');
+    b.addEventListener('click', () => {
+      if (b.dataset.panel === 'prefs') openOvl('prefs');
+      else toast('That panel arrives with step 8.', '', 2500);
+    });
+  });
+  $('ovlclose').addEventListener('click', closeOvl);
+  $('ovl').addEventListener('click', e => { if (e.target === $('ovl')) closeOvl(); });
   window.addEventListener('keydown', e => {
-    if (e.target === document.body) {
-      if (e.key === ' ') { e.preventDefault(); click(); return; }
-      // 1/2/3 set the buy selector to 1/10/100.
-      const n = { '1': 1, '2': 10, '3': 100 }[e.key];
-      if (n) state.ui.buyAmount = n;
-    }
+    if (e.key === 'Escape' && !$('ovl').hidden) { closeOvl(); return; }
+    if (e.target !== document.body) return;
+    if (e.key === ' ') { e.preventDefault(); click(); return; }
+    // 1/2/3 set the buy selector to 1/10/100.
+    const n = { '1': 1, '2': 10, '3': 100 }[e.key];
+    if (n) state.ui.buyAmount = n;
   });
   // rAF is the fast path; the interval also renders, because rAF stops in occluded
 // windows and hidden tabs, and a stale balance is worse than two text writes.
 setInterval(() => { tick(); render(); }, 250);
+  // lastSave drives offline progress, so it is written on a timer rather than only when
+  // something changes, and flushed whenever the page may be going away.
+  setInterval(save, 2000);
+  addEventListener('pagehide', save);
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') save();
+  });
   (function frame() { render(); requestAnimationFrame(frame); })();
+
+  if (!lsOK) {
+    $('warn').hidden = false;
+    $('warn').textContent =
+      'Saving unavailable — this browser blocks localStorage here, so progress will not ' +
+      'survive a reload. Use Preferences → Export before you close the tab.';
+    toast('Saving unavailable in this browser.', 'warn', 9000);
+  }
+  save();
 }
 
 boot();
