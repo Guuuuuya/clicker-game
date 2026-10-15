@@ -123,6 +123,16 @@ h2{
 #prestige{width:100%; max-width:420px}
 @media (prefers-reduced-motion: reduce){ #bill:active{transform:none} }
 
+/* ---- legacy (step 7) ---- */
+#legacy[hidden]{display:none}
+.lrow{display:flex; align-items:center; gap:var(--s2); margin-top:var(--s2)}
+.lrow .pgain{flex:1}
+.lhead{
+  margin-top:var(--s3); padding-top:var(--s2); border-top:1px solid var(--line);
+  font-size:11px; letter-spacing:.12em; color:var(--dim); text-transform:uppercase;
+}
+.pgrid{display:grid; grid-template-columns:1fr 1fr; gap:var(--s1); margin-top:var(--s1)}
+
 /* ---- skill tree (step 6) ---- */
 .tbranch{
   font-size:11px; letter-spacing:.12em; color:var(--dim); text-transform:uppercase;
@@ -295,6 +305,14 @@ select.btn{padding-right:var(--s2)}
     <h2>Skill Tree</h2>
     <div id="tbody"></div>
     <div class="tpoints" id="tpoints"></div>
+    <section id="legacy" hidden>
+      <div class="lhead">⟳ Legacy</div>
+      <div class="lrow"><span class="pgain" id="lgain"></span></div>
+      <div class="lrow"><button class="bbtn" id="legacybtn" type="button">Legacy</button></div>
+      <div class="lhead">Perks</div>
+      <div class="pgrid" id="pbody"></div>
+      <div class="tpoints" id="lpoints"></div>
+    </section>
   </section>
 </main>
 
@@ -470,7 +488,8 @@ function buyUpgrade(u) {
 // Coin-cost discount, shared by buildings and upgrades. L1 (step 7) extends this.
 const discount = () => Math.max(
   0.4,
-  Math.pow(0.95, treeRank('E1')) * (has('u_g1') ? 0.9 : 1) * (has('u_g7') ? 0.75 : 1)
+  Math.pow(0.95, treeRank('E1')) * Math.pow(0.95, perkRank('L1'))
+    * (has('u_g1') ? 0.9 : 1) * (has('u_g7') ? 0.75 : 1)
 );
 
 // One shared exponent: every unit purchased raises every building's cost and output.
@@ -558,6 +577,8 @@ function calc() {
   // Prestige multipliers. They read `earned`, never the spendable `points` pool, so
   // buying a tree node can never lower the player's multiplier.
   cps *= ascendMult() * legacyMult();
+  // L2 Legacy Engines compounds per rank.
+  cps *= Math.pow(1.2, perkRank('L2'));
   // Milk and seasons (step 9) fold in here.
   d.cps = Math.min(cps, CEIL);
   d.clickPower = Math.min(clickPower(), CEIL);
@@ -571,6 +592,9 @@ function earn(n) {
   state.coins = Math.min(state.coins + n, CEIL);
   state.runEarned = Math.min(state.runEarned + n, CEIL);
   state.totalEarned = Math.min(state.totalEarned + n, CEIL);
+  // Banked toward the next Legacy. Only income that genuinely counts as earned gets
+  // here, so injected payouts (E3, golden cookies, offline without U3) do not.
+  state.legacyEarned = Math.min(state.legacyEarned + n, CEIL);
 }
 
 function click() {
@@ -615,7 +639,7 @@ function tick() {
 
 // ---------------------------------------------------------------- render
 const AMOUNTS = [['1', 1], ['10', 10], ['100', 100], ['MAX', 'max']];
-const ui2 = { rows: [], sel: [], ups: new Map(), upKey: '', chips: new Map() };
+const ui2 = { rows: [], sel: [], ups: new Map(), upKey: '', chips: new Map(), perks: new Map() };
 
 function buildBuildingsUI() {
   const sel = $('buysel');
@@ -748,6 +772,53 @@ function paintTree() {
   $('tpoints').textContent = `${fmt(state.ascend.points)} pts spendable · ${fmt(spent)}/${TREE_TOTAL} invested`;
 }
 
+function buildLegacyUI() {
+  const grid = $('pbody');
+  for (const p of PERKS) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'chip' + (p.star ? ' star' : '');
+    b.innerHTML =
+      '<span class="cn"></span><span class="pips"></span>' +
+      '<span class="cd"></span><span class="cc"></span>';
+    b.querySelector('.cn').textContent = p.name;
+    b.querySelector('.cd').textContent = p.desc;
+    b.addEventListener('click', () => buyPerk(p.id));
+    grid.append(b);
+    ui2.perks.set(p.id, b);
+  }
+}
+
+function paintLegacy() {
+  if (!legacyUnlocked()) { $('legacy').hidden = true; return; }
+  $('legacy').hidden = false;
+
+  const gain = legacyGain();
+  $('lgain').textContent = gain > 0
+    ? `Enter now: +${fmt(gain)} point${gain === 1 ? '' : 's'}`
+    : `Banked ${fmt(state.legacyEarned)} this layer · gains start at ${fmt(1e12)}`;
+  $('legacybtn').disabled = gain <= 0;
+
+  for (const p of PERKS) {
+    const el = ui2.perks.get(p.id);
+    const rank = perkRank(p.id);
+    const maxed = perkMaxed(p);
+    el.classList.toggle('owned', rank > 0);
+    el.classList.toggle('maxed', maxed);
+    el.querySelector('.pips').textContent = maxed ? '★'.repeat(p.max) : '●'.repeat(rank) + '○'.repeat(p.max - rank);
+    const n = maxed ? 0 : perkCount(p.id);
+    const cost = n > 0 ? perkCost(p.id, n) : 0;
+    el.querySelector('.cc').textContent = maxed ? 'maxed' : fmt(cost) + ' pt' + (n > 1 ? ' ×' + n : '');
+    el.querySelector('.cc').classList.toggle('poor', !maxed && cost > state.legacy.points);
+    el.disabled = maxed || cost > state.legacy.points;
+  }
+  const spent = PERKS.reduce((a, p) => {
+    const r = perkRank(p.id);
+    return a + r * p.cost + p.step * (r * (r - 1) / 2);
+  }, 0);
+  $('lpoints').textContent = `${fmt(state.legacy.points)} pts · ${fmt(spent)}/${PERKS_TOTAL} invested`;
+}
+
 function paintPrestige() {
   const gain = ascendGain();
   const ready = gain > 0;
@@ -761,7 +832,8 @@ function paintPrestige() {
   $('ascend').disabled = !ready;
   $('pnote').textContent = state.ascend.runs === 0
     ? 'Ascending resets cookies, buildings and upgrades. Skill tree and perks are kept.'
-    : `Ascends: ${state.ascend.runs} · ×${ascendMult().toFixed(1)} lifetime · Legacy arrives with step 7.`;
+    : `Ascends: ${state.ascend.runs} · ×${ascendMult().toFixed(1)} lifetime` +
+    (legacyUnlocked() ? ` · Legacy ${state.legacy.runs} · ×${legacyMult().toFixed(1)}` : ' · Legacy at 3 ascends');
 }
 
 function render() {
@@ -775,6 +847,7 @@ function render() {
   paintUpgrades();
   paintTree();
   paintPrestige();
+  paintLegacy();
 }
 
 // ---------------------------------------------------------------- ascend
@@ -931,6 +1004,90 @@ function buyNode(id) {
   paintTree();
 }
 
+// ---------------------------------------------------------------- legacy
+// Second prestige layer, unlocked at 3 Ascends. Loses cookies and upgrades but KEEPS
+// buildings, which is what makes it worth taking inside a run rather than after it.
+// Flat list, not a tree: legacy perks do not branch, and a second graph doubles the
+// design cost for no gain.
+const PERKS = [
+  { id:'L1', name:'Deep Reserves',     desc:'building costs x0.95',   cost:1,  step:1,  max:5 },
+  { id:'L2', name:'Legacy Engines',    desc:'all cps x1.2',           cost:2,  step:1,  max:5 },
+  { id:'L3', name:'Inheritance',       desc:'keep 25% of upgrades on Ascend', cost:10, step:0, max:1 },
+  { id:'L4', name:'Persistent Base',   desc:'keep 25% of buildings on Ascend', cost:15, step:0, max:1 },
+  { id:'L5', name:'Compound Legacy',   desc:'legacy points +20%',     cost:25, step:10, max:3 },
+  { id:'L6', name:'Double Time',       desc:'offline rate +25%, cap x2', cost:40, step:0, max:1, star:true },
+  { id:'L7', name:'Prestige Mastery',  desc:'ascend gains +25%',      cost:60, step:0,  max:1, star:true },
+  { id:'L8', name:'Eternal',           desc:'buildings never reset again', cost:100, step:0, max:1, star:true },
+];
+const PERKS_TOTAL = PERKS.reduce((a, p) => a + p.max * p.cost + p.step * (p.max * (p.max - 1) / 2), 0);
+const LEGACY_RUNS = 3;
+const legacyUnlocked = () => state.ascend.runs >= LEGACY_RUNS;
+
+const perk = id => PERKS.find(p => p.id === id);
+const perkMaxed = p => perkRank(p.id) >= p.max;
+function perkCost(id, n) {
+  const p = perk(id), rank = perkRank(id);
+  let sum = 0;
+  for (let k = 0; k < n; k++) sum += p.cost + (rank + k) * p.step;
+  return sum;
+}
+function perkCount(id) {
+  const p = perk(id), room = p.max - perkRank(id);
+  if (room <= 0) return 0;
+  if (state.ui.buyAmount !== 'max') return Math.min(state.ui.buyAmount, room);
+  let n = 0, sum = 0;
+  while (n < room) {
+    const c = perkCost(id, n + 1) - sum;
+    if (!isFinite(c) || sum + c > state.legacy.points) break;
+    sum += c;
+    n++;
+  }
+  return n;
+}
+function buyPerk(id) {
+  const p = perk(id);
+  if (!p || perkMaxed(p)) return;
+  const n = perkCount(id);
+  if (n <= 0) return;
+  const cost = perkCost(id, n);
+  if (!isFinite(cost) || cost > state.legacy.points) return;
+  state.legacy.points -= cost;
+  state.perks[id] = perkRank(id) + n;
+  calc();
+  paintLegacy();
+}
+
+// LegacyEarned accumulates across every Ascend and is cleared only when Legacy pays
+// out, so the second layer is banked over many runs rather than one.
+function legacyGain() {
+  if (state.legacyEarned < 1e12) return 0;
+  return Math.floor(Math.sqrt(state.legacyEarned / 1e12) * (1 + 0.2 * perkRank('L5')));
+}
+
+function doLegacy() {
+  const gain = legacyGain();
+  if (gain <= 0 || !legacyUnlocked()) return;
+  if (!confirm(
+    'Enter Legacy?\n\n' +
+    'You lose your cookies and upgrades.\nYour buildings are KEPT.\n' +
+    'You gain ' + fmt(gain) + ' legacy point' + (gain === 1 ? '' : 's') +
+    '\n\nThis cannot be undone.'
+  )) return;
+  state.coins = 0;
+  state.upgrades = [];
+  // Buildings and runEarned deliberately survive: Legacy resets the spending layer,
+  // not the run. runEarned is what Ascend reads, so your next Ascend is still live.
+  state.legacyEarned = 0;
+  state.legacy.runs++;
+  state.legacy.points += gain;
+  state.legacy.earned += gain;
+  rt.last = performance.now();
+  calc();
+  save();
+  render();
+  toast(`Legacy entered. +${fmt(gain)} legacy point${gain === 1 ? '' : 's'}. Buildings kept.`, 'good', 6000);
+}
+
 // ---------------------------------------------------------------- offline
 // U1 and U2 raise these; U1 tops out at a 100% rate and U2 at 20h.
 const offlineRate = () => 0.5 + 0.1 * treeRank('U1') + (perkRank('L6') ? 0.25 : 0);
@@ -1038,6 +1195,7 @@ function boot() {
   rt.last = performance.now();
   buildBuildingsUI();
   buildTreeUI();
+  buildLegacyUI();
   const bill = $('bill');
   bill.textContent = 'CLICK';
   bill.addEventListener('pointerdown', e => { e.preventDefault(); click(); });
@@ -1053,6 +1211,7 @@ function boot() {
   });
   $('ovlclose').addEventListener('click', closeOvl);
   $('ascend').addEventListener('click', doAscend);
+  $('legacybtn').addEventListener('click', doLegacy);
   $('ovl').addEventListener('click', e => { if (e.target === $('ovl')) closeOvl(); });
   window.addEventListener('keydown', e => {
     if (e.key === 'Escape' && !$('ovl').hidden) { closeOvl(); return; }
