@@ -228,19 +228,37 @@ h2{
 .pgrid{display:grid; grid-template-columns:1fr 1fr; gap:var(--s1); margin-top:var(--s1)}
 
 /* ---- skill tree: a real tree, in its own overlay (step 11) ---- */
-.tsvg{width:100%; height:auto; display:block}
-.thead{fill:var(--dim); font-size:11px; text-anchor:middle; letter-spacing:.1em}
-.tlink{stroke:var(--line); stroke-width:2}
-.tlink.req{stroke:var(--accent); stroke-opacity:.45; stroke-dasharray:4 3}
-.tnode rect{fill:var(--panel2); stroke:var(--line); stroke-width:1; cursor:pointer}
-.tnode:hover rect{stroke:var(--accent); stroke-width:2}
-.tnode.owned rect{stroke:var(--accent); stroke-width:2; fill:color-mix(in srgb,var(--accent) 12%,var(--panel2))}
-.tnode.maxed rect{stroke:var(--good); fill:color-mix(in srgb,var(--good) 16%,var(--panel2))}
-.tnode.locked{opacity:.32; cursor:not-allowed}
-.tnode.star.owned rect{stroke:var(--gold); fill:color-mix(in srgb,var(--gold) 14%,var(--panel2))}
-.tn{fill:var(--text); font-size:15px; font-weight:600}
-.tp{fill:var(--accent2); font-size:12px; letter-spacing:1px}
-.td{fill:var(--dim); font-size:12px}
+/* The tree is a fixed-size diagram, not a fluid one. width:100% made five columns squeeze
+   to ~73px each on a 390px phone, which is why it was unreadable there. Below the desktop
+   width the SVG keeps its natural size and the wrapper scrolls horizontally instead. */
+.tsvg{width:100%; height:auto; display:block; min-width:900px}
+.tscroll{overflow-x:auto; overflow-y:hidden; -webkit-overflow-scrolling:touch}
+.tscroll::-webkit-scrollbar{height:8px}
+.tscroll::-webkit-scrollbar-thumb{background:var(--line); border-radius:4px}
+.tlegend{font-size:12px; color:var(--dim); margin:var(--s3) 0 0; line-height:1.6}
+.thead{fill:var(--dim); font-size:14px; font-weight:700; text-anchor:middle; letter-spacing:.14em}
+.trunk{stroke:var(--line); stroke-width:3; stroke-linecap:round; opacity:.55}
+.tlink{stroke:var(--accent); stroke-width:2.5; color:var(--accent); opacity:.8}
+.tlink.jump{stroke:var(--gold); stroke-dasharray:6 5; opacity:.9}
+.tnode rect.nbox{
+  fill:var(--panel2); stroke:var(--line); stroke-width:1.5; cursor:pointer;
+}
+.tnode:hover rect.nbox{stroke:var(--accent); stroke-width:2.5}
+.tnode.locked{opacity:.34; cursor:not-allowed}
+.tnode.owned rect.nbox{
+  stroke:var(--accent); stroke-width:2.5;
+  fill:color-mix(in srgb,var(--accent) 14%,var(--panel2));
+}
+.tnode.maxed rect.nbox{
+  stroke:var(--gold); stroke-width:3;
+  fill:color-mix(in srgb,var(--gold) 18%,var(--panel2));
+}
+.tn{fill:var(--text); font-size:15px; font-weight:700}
+.td{fill:var(--dim); font-size:11.5px}
+.tp{fill:var(--accent2); font-size:11px; letter-spacing:2px}
+.tc{fill:var(--text); font-size:13px; font-weight:600}
+.tc.poor{fill:var(--bad)}
+@media (prefers-reduced-motion: reduce){ .tnode rect{transition:none} }
 .td.poor{fill:var(--bad)}
 
 /* ---- centre band information panels (step 11) ---- */
@@ -633,19 +651,23 @@ const buildingCps = i => BUILDINGS[i].baseCps;
 // Buildings and upgrades are separate systems with separate lifetimes. Upgrades
 // multiply, disappear permanently when bought, and are lost on Ascend and Legacy.
 // u_b0..u_b4 multiply their own building only (per the branch table), not all cps.
+// An upgrade carrying `req` stays HIDDEN until that upgrade is owned. `unlock` decides WHEN
+// something becomes visible; `req` decides whether it belongs on the path at all. The click
+// and auto ladders are the ones with a real order to them: x2 click then x2 click then x3
+// click means nothing out of sequence, and neither does Auto II x3 before Auto I x3.
 const UPGRADES = [
   { id: 'u_c1', name: 'Reinforced Knuckles', icon: '✊', effect: '×2 click',        cost: 100,     unlock: () => true },
-  { id: 'u_c2', name: 'Weighted Glove',      icon: '🥊', effect: '×2 click',        cost: 2000,    unlock: s => s.clicks >= 100 },
-  { id: 'u_c3', name: 'Second Hand',         icon: '✋', effect: '×3 click',        cost: 40000,   unlock: s => s.clicks >= 500 },
+  { id: 'u_c2', name: 'Weighted Glove',      icon: '🥊', effect: '×2 click',        cost: 2000,    unlock: s => s.clicks >= 100, req: 'u_c1' },
+  { id: 'u_c3', name: 'Second Hand',         icon: '✋', effect: '×3 click',        cost: 40000,   unlock: s => s.clicks >= 500, req: 'u_c2' },
   { id: 'u_c4', name: 'Autoclicker Mk I',    icon: '🤖', effect: '+2 cps',          cost: 500,     unlock: s => s.clicks >= 50 },
   { id: 'u_c5', name: 'Cloned Hands',        icon: '🖐', effect: 'clicks add 1% cps', cost: 20000,  unlock: s => s.clicks >= 250 },
-  { id: 'u_c6', name: 'Golden Glove ★',   icon: '🌟', effect: '×10 click',       cost: 1000000, unlock: s => s.clicks >= 1000 },
+  { id: 'u_c6', name: 'Golden Glove ★',   icon: '🌟', effect: '×10 click',       cost: 1000000, unlock: s => s.clicks >= 1000, req: 'u_c3' },
 
   { id: 'u_b0', name: 'Overclocked Servo',   icon: '▣', effect: 'Auto I ×3',       cost: 300,     unlock: s => s.buildings[0] >= 10 },
-  { id: 'u_b1', name: 'Tuned Assembly',      icon: '▤', effect: 'Auto II ×3',      cost: 5000,    unlock: s => s.buildings[1] >= 10 },
-  { id: 'u_b2', name: 'Smelting Line',       icon: '▥', effect: 'Auto III ×3',     cost: 60000,   unlock: s => s.buildings[2] >= 10 },
-  { id: 'u_b3', name: 'Quantum Plant',       icon: '▦', effect: 'Auto IV ×3',      cost: 700000,  unlock: s => s.buildings[3] >= 10 },
-  { id: 'u_b4', name: 'Self-Improving Mill', icon: '▧', effect: 'Auto V ×3',       cost: 8000000, unlock: s => s.buildings[4] >= 10 },
+  { id: 'u_b1', name: 'Tuned Assembly',      icon: '▤', effect: 'Auto II ×3',      cost: 5000,    unlock: s => s.buildings[1] >= 10, req: 'u_b0' },
+  { id: 'u_b2', name: 'Smelting Line',       icon: '▥', effect: 'Auto III ×3',     cost: 60000,   unlock: s => s.buildings[2] >= 10, req: 'u_b1' },
+  { id: 'u_b3', name: 'Quantum Plant',       icon: '▦', effect: 'Auto IV ×3',      cost: 700000,  unlock: s => s.buildings[3] >= 10, req: 'u_b2' },
+  { id: 'u_b4', name: 'Self-Improving Mill', icon: '▧', effect: 'Auto V ×3',       cost: 8000000, unlock: s => s.buildings[4] >= 10, req: 'u_b3' },
 
   { id: 'u_g1', name: 'Bulk Buying',       icon: '🛒', effect: 'building costs ×0.9',           cost: 1000,    unlock: s => totalBuildings() >= 10 },
   { id: 'u_g2', name: 'Economies of Scale',icon: '📈', effect: 'all cps ×1.5',                 cost: 20000,   unlock: s => totalBuildings() >= 20 },
@@ -664,7 +686,8 @@ const unlockCost = u => Math.floor(u.cost * (has('u_g8') ? 0.8 : 1));
 // Locked upgrades are never rendered. Conditions are re-read every paint, so an
 // upgrade appears the instant its condition flips true, with no purchase needed.
 const visibleUpgrades = () =>
-  UPGRADES.filter(u => !has(u.id) && u.unlock(state)).sort((a, b) => a.cost - b.cost);
+  UPGRADES.filter(u => !has(u.id) && (!u.req || has(u.req)) && u.unlock(state))
+    .sort((a, b) => a.cost - b.cost);
 
 function buyUpgrade(u) {
   const cost = unlockCost(u);
@@ -963,58 +986,78 @@ function paintUpgrades() {
 // connectors. Positions come from (branch, depth), not from document flow, so the
 // prereq links can be drawn as curves between columns.
 const TREE_COLS = 5, TREE_ROWS = 4;
-const TREE_CW = 190, TREE_CH = 104, TREE_PAD = 20;
+const TREE_CW = 236, TREE_CH = 122, TREE_PAD = 26;
 function treePos(t) {
   const col = BRANCHES.findIndex(b => b[0] === t.br);
   const depth = TREE.filter(n => n.br === t.br).indexOf(t);
-  return { x: TREE_PAD + col * TREE_CW, y: TREE_PAD + 18 + depth * TREE_CH };
+  return { x: TREE_PAD + col * TREE_CW, y: TREE_PAD + 34 + depth * TREE_CH };
 }
 const TREE_W = TREE_PAD * 2 + TREE_COLS * TREE_CW;
-const TREE_H = TREE_PAD * 2 + 18 + TREE_ROWS * TREE_CH;
+const TREE_H = TREE_PAD * 2 + 34 + TREE_ROWS * TREE_CH;
+const NODE_W = TREE_CW - 30, NODE_H = TREE_CH - 34;
+const trunkX = p => p.x + TREE_CW / 2;
 
+// The trunk is the branch rail behind the nodes; the arrowed segments are the real
+// prerequisite path. They used to be one undifferentiated line, so nothing said which
+// nodes were actually gated on which. Arrowheads now make the direction unambiguous.
 function treeEdge(id) {
   const t = node(id);
   const a = treePos(t);
-  const prev = TREE.filter(n => n.br === t.br);
-  const i = prev.indexOf(t);
+  const up = treeAbove(t);
   let d = '';
-  if (i > 0) {
-    // vertical link down the same branch
-    const b = treePos(prev[i - 1]);
-    const x = a.x + TREE_CW / 2, y1 = b.y + TREE_CH - 10, y2 = a.y + 2;
-    d += `<line class="tlink" x1="${x}" y1="${y1}" x2="${x}" y2="${y2}"/>`;
+  if (up) {
+    const b = treePos(up);
+    d += '<path class="tlink" fill="none" marker-end="url(#tarrow)" d="M' +
+      trunkX(b) + ',' + (b.y + NODE_H) + ' L' + trunkX(a) + ',' + (a.y - 6) + '"/>';
   }
-  if (t.req) {
-    // curved link across branches
+  // A req that is NOT simply the node above is a shortcut across the branch, so it gets
+  // its own dashed curve. C4 jumps back to C2 while the chain runs C1>C2>C3>C4.
+  if (t.req && (!up || t.req !== up.id)) {
     const r = node(t.req);
-    const b = treePos(r);
-    const x1 = b.x + TREE_CW / 2, y1 = b.y + TREE_CH - 10;
-    const x2 = a.x + TREE_CW / 2, y2 = a.y + 2;
-    const mx = (x1 + x2) / 2, my = (y1 + y2) / 2 - 18;
-    d += `<path class="tlink req" fill="none" d="M${x1},${y1} Q${mx},${my} ${x2},${y2}"/>`;
+    if (r) {
+      const b = treePos(r);
+      const x1 = trunkX(b), y1 = b.y + NODE_H;
+      const x2 = trunkX(a), y2 = a.y - 6;
+      d += '<path class="tlink jump" fill="none" d="M' + x1 + ',' + y1 +
+        ' C' + x1 + ',' + (y1 + 40) + ' ' + x2 + ',' + (y2 - 40) + ' ' + x2 + ',' + y2 + '"/>';
+    }
   }
   return d;
 }
 
 function buildTreeUI() {
   const host = $('tbody');
+  const trunks = BRANCHES.map(([br], i) => {
+    const col = TREE.filter(n => n.br === br);
+    if (col.length < 2) return '';
+    const first = treePos(col[0]), last = treePos(col[col.length - 1]);
+    return '<line class="trunk" x1="' + trunkX(first) + '" y1="' + first.y + '" x2="' +
+      trunkX(last) + '" y2="' + (last.y + NODE_H) + '"/>';
+  }).join('');
   host.innerHTML = '<svg class="tsvg" viewBox="0 0 ' + TREE_W + ' ' + TREE_H + '" ' +
     'width="' + TREE_W + '" height="' + TREE_H + '">' +
+    '<defs><marker id="tarrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" ' +
+    'markerHeight="7" orient="auto-start-reverse">' +
+    '<path d="M0,0 L10,5 L0,10 z" fill="currentColor"/></marker></defs>' +
     BRANCHES.map(([br, label], i) =>
-      '<text class="thead" x="' + (TREE_PAD + i * TREE_CW + TREE_CW / 2) + '" y="14">' +
-      label.replace(/ ./, ' ') + '</text>').join('') +
+      '<text class="thead" x="' + trunkX({ x: TREE_PAD + i * TREE_CW, y: 0 }) + '" y="20">' +
+      label.replace(/^\?\s*/, '') + '</text>').join('') +
+    trunks +
     TREE.map(t => treeEdge(t.id)).join('') +
     TREE.map(t => {
       const p = treePos(t);
       return '<g class="tnode" data-id="' + t.id + '" transform="translate(' +
-        (p.x + 4) + ',' + p.y + ')">' +
-        '<rect width="' + (TREE_CW - 12) + '" height="' + (TREE_CH - 16) + '" rx="7"/>' +
-        '<text class="tn" x="8" y="16"></text>' +
-        '<text class="tp" x="8" y="30"></text>' +
-        '<text class="td" x="8" y="44"></text>' +
+        (p.x + (TREE_CW - NODE_W) / 2) + ',' + p.y + ')">' +
+        '<rect class="nbox" width="' + NODE_W + '" height="' + NODE_H + '" rx="10"/>' +
+        '<text class="tn" x="12" y="22"></text>' +
+        '<text class="td" x="12" y="40"></text>' +
+        '<text class="tp" x="12" y="58"></text>' +
+        '<text class="tc" x="12" y="' + (NODE_H - 12) + '"></text>' +
         '</g>';
     }).join('') +
-    '</svg>';
+    '</svg>' +
+    '<p class="tlegend">Each node needs the one above it. Filled = owned, hollow = ' +
+    'unaffordable, dim = locked, gold ring = maxed.</p>';
 
   ui2.tnodes = new Map();
   for (const g of host.querySelectorAll('.tnode')) {
@@ -1037,21 +1080,26 @@ function paintTree() {
     el.classList.toggle('locked', locked);
     el.classList.toggle('star', !!t.star);
     const pips = maxed ? '★'.repeat(t.max) : '●'.repeat(rank) + '○'.repeat(t.max - rank);
-    let label;
-    if (locked) label = 'needs ' + node(t.req).name;
-    else if (maxed) label = 'maxed';
-    else {
-      const n = nodeCount(t.id);
-      const cost = n > 0 ? nodeCost(t.id, n) : 0;
-      label = fmt(cost) + ' pt' + (n > 1 ? ' ×' + n : '');
-    }
     const q = c => el.querySelector('.' + c);
     q('tn').textContent = t.name;
+    // SVG text does not wrap, and several descriptions are longer than the node. Truncate
+    // here; the full string is still on the tooltip.
+    q('td').textContent = t.desc.length > 30 ? t.desc.slice(0, 29) + '…' : t.desc;
     q('tp').textContent = pips;
-    q('td').textContent = label;
-    q('td').classList.toggle('poor', !locked && !maxed && nodeCost(t.id, 1) > state.ascend.points);
+    if (locked) {
+      const up = treeAbove(t);
+      const need = up && !treeRank(up.id) ? up.name : (t.req ? node(t.req).name : '');
+      q('tc').textContent = need ? 'needs ' + need : 'locked';
+    } else if (maxed) {
+      q('tc').textContent = 'maxed';
+    } else {
+      const n = nodeCount(t.id);
+      const cost = n > 0 ? nodeCost(t.id, n) : 0;
+      q('tc').textContent = fmt(cost) + ' pt' + (n > 1 ? ' ×' + n : '');
+    }
+    q('tc').classList.toggle('poor', !locked && !maxed && nodeCost(t.id, 1) > state.ascend.points);
     el.setAttribute('aria-disabled', String(locked || maxed || state.ascend.points <= 0));
-    const title = `${t.name} — ${t.desc} · max ${t.max} · ${label}`;
+    const title = `${t.name} — ${t.desc} · max ${t.max} · ${q('tc').textContent}`;
     el.querySelector('title') || el.append(Object.assign(document.createElement('title'), { textContent: title }));
   }
   const spent = TREE.reduce((a, n) => a + treeRank(n.id) * n.cost + n.step * (treeRank(n.id) * (treeRank(n.id) - 1) / 2), 0);
@@ -1289,7 +1337,22 @@ const BRANCHES = [
 const TREE_TOTAL = TREE.reduce((a, n) => a + n.max * n.cost + n.step * (n.max * (n.max - 1) / 2), 0);
 
 const node = id => TREE.find(n => n.id === id);
-const treeLocked = n => n.req && treeRank(n.req) < 1;
+// The node above this one in the same branch, or null at the top of a branch.
+const treeAbove = n => {
+  const col = TREE.filter(x => x.br === n.br);
+  const i = col.indexOf(n);
+  return i > 0 ? col[i - 1] : null;
+};
+// Each branch is a REAL chain: a node needs the one above it. The vertical connectors used
+// to be decorative only, so the diagram implied a dependency the game never enforced. Three
+// of four branches happened to carry req on their last node, but C4 required C2 and not C3,
+// which is exactly the kind of inconsistency a player reads as a broken path. The chain
+// makes the drawn path truthful; req is still honoured on top of it.
+const treeLocked = n => {
+  const up = treeAbove(n);
+  if (up && treeRank(up.id) < 1) return true;
+  return !!(n.req && treeRank(n.req) < 1);
+};
 const treeMaxed = n => treeRank(n.id) >= n.max;
 
 function nodeCost(id, n) {
@@ -2136,7 +2199,7 @@ function openOvl(name) {
         '<button class="btn danger" id="ptreset" type="button">Reset</button></div>';
     wirePrefs();
   } else if (name === 'tree') {
-    $('ovlbody').innerHTML = '<div id="tbody"></div><div class="tpoints" id="tpoints"></div>';
+    $('ovlbody').innerHTML = '<div class="tscroll"><div id="tbody"></div></div><div class="tpoints" id="tpoints"></div>';
     buildTreeUI();
     paintTree();
   } else {
