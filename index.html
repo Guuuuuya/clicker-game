@@ -66,6 +66,40 @@ h2{
 }
 .empty{font-size:12px; color:var(--dim)}
 
+/* ---- buy selector ---- */
+.buysel{display:flex; gap:var(--s1); margin-bottom:var(--s3)}
+.buysel button{
+  flex:1; padding:var(--s1); background:var(--panel2); border:1px solid var(--line);
+  border-radius:6px; cursor:pointer; font-size:13px;
+}
+.buysel button[aria-pressed="true"]{
+  border:2px solid var(--accent); color:var(--accent); box-shadow:var(--glow);
+  padding:calc(var(--s1) - 1px);
+}
+.buysel button:hover{border-color:var(--accent)}
+
+/* ---- building row ---- */
+.brow{padding:var(--s2); border-radius:8px; border:1px solid transparent}
+.brow:hover{background:var(--panel2); border-color:var(--line)}
+.bline1{display:flex; align-items:center; gap:var(--s2)}
+.bico{
+  width:22px; text-align:center; font-size:18px; color:var(--accent2);
+}
+.bname{font-size:15px}
+.bown{margin-left:auto; color:var(--dim)}
+.bline2{display:flex; align-items:center; gap:var(--s2); margin-top:var(--s1)}
+.bcost{font-size:13px; min-width:86px; color:var(--bad)}
+.bcost.ok{color:var(--good)}
+.bbuy{
+  padding:var(--s1) var(--s3); background:var(--panel2); border:1px solid var(--line);
+  border-radius:6px; cursor:pointer; font-size:13px;
+}
+.bbuy:hover:not(:disabled){border-width:2px; border-color:var(--accent); box-shadow:var(--glow)}
+.bbuy:active:not(:disabled){transform:translateY(1px)}
+.bbuy:disabled{opacity:.35; cursor:not-allowed}
+.bmax{font-size:12px; color:var(--gold); letter-spacing:.1em}
+@media (prefers-reduced-motion: reduce){ .bbuy:active:not(:disabled){transform:none} }
+
 /* ---- click target (canvas bill lands in step 10) ---- */
 #bill{
   width:240px; height:120px; border-radius:8px; cursor:pointer; user-select:none;
@@ -111,7 +145,8 @@ h2{
 <main>
   <section id="buildings" class="col panel">
     <h2>Buildings</h2>
-    <p class="empty">Step 2.</p>
+    <div class="buysel" id="buysel" role="group" aria-label="Buy amount"></div>
+    <div id="brows"></div>
   </section>
 
   <section id="upgrades" class="col panel">
@@ -173,11 +208,69 @@ function fmt(v) {
   return (n < 10 ? n.toFixed(2) : n < 100 ? n.toFixed(1) : Math.floor(n)) + SUF[i];
 }
 
+// ---------------------------------------------------------------- buildings
+const BUILDINGS = [
+  { id: 'b0', label: 'Auto I',   icon: '◻', baseCost: 50,      baseCps: 1     },
+  { id: 'b1', label: 'Auto II',  icon: '▣', baseCost: 500,     baseCps: 12    },
+  { id: 'b2', label: 'Auto III', icon: '▤', baseCost: 5000,    baseCps: 100   },
+  { id: 'b3', label: 'Auto IV',  icon: '▥', baseCost: 50000,   baseCps: 800   },
+  { id: 'b4', label: 'Auto V',   icon: '▦', baseCost: 500000,  baseCps: 6400  },
+  { id: 'b5', label: 'Auto VI',  icon: '▧', baseCost: 5000000, baseCps: 51000 },
+];
+const CAP = 1000;                       // hard cap per building. 1.15^6000 still
+                                        // overflows Number, so CEIL is the real guard.
+const totalBuildings = () => state.buildings.reduce((a, b) => a + b, 0);
+
+// Coin-cost discount. Factors arrive with their systems: u_g1/u_g7 in step 3,
+// tree E1 in step 6, perk L1 in step 7.
+const discount = () => 1;
+
+// One shared exponent: every unit purchased raises every building's cost and output.
+const crossBoost = () => Math.pow(1.15, totalBuildings());
+const unitPrice = (i, extra) => Math.floor(BUILDINGS[i].baseCost * Math.pow(1.15, totalBuildings() + extra) * discount());
+
+// Sum of individually floored unit prices. Never floor() the sum.
+function costOf(i, n) {
+  let sum = 0;
+  for (let k = 0; k < n; k++) sum += unitPrice(i, k);
+  return sum;
+}
+
+// MAX is bounded twice: the 1000 cap bounds the loop, the balance check bounds it
+// far sooner and is the only thing stopping 1.15^k from overflowing mid-walk.
+function maxAffordable(i) {
+  const room = CAP - state.buildings[i];
+  let n = 0, sum = 0;
+  for (; n < room; n++) {
+    const c = unitPrice(i, n);
+    if (!isFinite(c) || sum + c > state.coins) break;
+    sum += c;
+  }
+  return n;
+}
+
+function buyCount(i) {
+  const room = CAP - state.buildings[i];
+  if (room <= 0) return 0;
+  return state.ui.buyAmount === 'max' ? maxAffordable(i) : Math.min(state.ui.buyAmount, room);
+}
+
+function buyBuilding(i) {
+  const n = buyCount(i);
+  if (n <= 0) return;
+  const cost = costOf(i, n);
+  if (!isFinite(cost) || cost > state.coins) return;
+  state.coins -= cost;
+  state.buildings[i] += n;
+}
+
 // ---------------------------------------------------------------- derived (never stored)
 const d = { cps: 0, clickPower: 1 };
 function calc() {
-  d.cps = 0;          // no buildings until step 2
-  d.clickPower = 1;   // no upgrades, tree or perks yet
+  // Building-specific upgrades land in step 3, prestige multipliers in 5/6/7.
+  const raw = state.buildings.reduce((s, _, i) => s + state.buildings[i] * BUILDINGS[i].baseCps, 0);
+  d.cps = Math.min(raw * crossBoost(), CEIL);
+  d.clickPower = 1;
 }
 
 // ---------------------------------------------------------------- economy
@@ -205,10 +298,63 @@ function tick() {
   const dt = clamp(now - rt.last, 0, 60000);
   rt.last = now;
   rt.idleMs += dt;
+  calc();
   state.coins = Math.min(state.coins + d.cps * dt / 1000, CEIL);
 }
 
 // ---------------------------------------------------------------- render
+const AMOUNTS = [['1', 1], ['10', 10], ['100', 100], ['MAX', 'max']];
+const ui2 = { rows: [], sel: [] };
+
+function buildBuildingsUI() {
+  const sel = $('buysel');
+  for (const [label, val] of AMOUNTS) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = label;
+    b.addEventListener('click', () => { state.ui.buyAmount = val; });
+    sel.append(b);
+    ui2.sel.push(b);
+  }
+  const host = $('brows');
+  BUILDINGS.forEach((b, i) => {
+    const row = document.createElement('div');
+    row.className = 'brow';
+    row.innerHTML =
+      `<div class="bline1"><span class="bico">${b.icon}</span>` +
+      `<span class="bname">${b.label}</span><span class="bown num">0</span></div>` +
+      `<div class="bline2"><span class="bcost num"></span>` +
+      `<button class="bbuy" type="button"></button><span class="bmax">MAX</span></div>`;
+    row.querySelector('.bbuy').addEventListener('click', () => buyBuilding(i));
+    host.append(row);
+    ui2.rows.push({
+      own: row.querySelector('.bown'),
+      cost: row.querySelector('.bcost'),
+      buy: row.querySelector('.bbuy'),
+      max: row.querySelector('.bmax'),
+    });
+  });
+}
+
+function paintBuildings() {
+  for (const [k, b] of ui2.sel.entries()) b.setAttribute('aria-pressed', String(state.ui.buyAmount === AMOUNTS[k][1]));
+  BUILDINGS.forEach((b, i) => {
+    const el = ui2.rows[i];
+    const n = state.buildings[i];
+    const capped = n >= CAP;
+    const count = buyCount(i);
+    const cost = count ? costOf(i, count) : Infinity;
+    const afford = !capped && count > 0 && isFinite(cost) && cost <= state.coins;
+
+    el.own.textContent = fmt(n);
+    el.cost.textContent = fmt(unitPrice(i, 0));
+    el.cost.classList.toggle('ok', afford);
+    el.max.style.display = capped ? '' : 'none';
+    el.buy.textContent = capped ? 'MAX' : state.ui.buyAmount === 'max' ? 'Buy MAX' : `Buy ${count}`;
+    el.buy.disabled = !afford;
+  });
+}
+
 function render() {
   $('bal').textContent = fmt(state.coins);
   $('cps').textContent = fmt(d.cps);
@@ -216,12 +362,14 @@ function render() {
     `${fmt(state.runEarned)} run · ×${(1 + 0.15 * state.ascend.earned).toFixed(1)} ascend · ` +
     `×${(1 + 0.25 * state.legacy.earned).toFixed(1)} legacy · ` +
     `${fmt(state.ascend.points)} pts · ${fmt(state.legacy.points)} legacy`;
+  paintBuildings();
 }
 
 // ---------------------------------------------------------------- boot
 function boot() {
   calc();
   rt.last = performance.now();
+  buildBuildingsUI();
   const bill = $('bill');
   bill.textContent = 'CLICK';
   bill.addEventListener('pointerdown', e => { e.preventDefault(); click(); });
@@ -229,7 +377,12 @@ function boot() {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); click(); }
   });
   window.addEventListener('keydown', e => {
-    if (e.key === ' ' && e.target === document.body) { e.preventDefault(); click(); }
+    if (e.target === document.body) {
+      if (e.key === ' ') { e.preventDefault(); click(); return; }
+      // 1/2/3 set the buy selector to 1/10/100.
+      const n = { '1': 1, '2': 10, '3': 100 }[e.key];
+      if (n) state.ui.buyAmount = n;
+    }
   });
   // rAF is the fast path; the interval also renders, because rAF stops in occluded
 // windows and hidden tabs, and a stale balance is worse than two text writes.
