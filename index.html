@@ -1107,7 +1107,11 @@ function render() {
     `${fmt(state.ascend.points)} pts · ${fmt(state.legacy.points)} legacy`;
   paintBuildings();
   paintUpgrades();
-  paintTree();
+  // paintTree() is NOT called here. It writes $('tpoints'), and that element only exists
+  // while the tree overlay is open -- openOvl builds #tbody/#tpoints on demand. Calling it
+  // unconditionally made render() throw on the very first frame, which killed the rAF loop
+  // below and left drawBill() never running once: a blank canvas, and a frozen UI. paint()
+  // already calls it, correctly gated on `ovlName === 'tree'`.
   paintPrestige();
   paintLegacy();
   paintParity();
@@ -1966,13 +1970,19 @@ function applyOffline() {
   if (raw <= 0) return;            // first ever boot, or the clock moved backwards
   calc();
   const away = Math.min(raw, offlineCap());
-  const bonus = d.cps * away * offlineRate();
+  // `away` is milliseconds; d.cps is cookies per SECOND. Without this division the award
+  // is 1000x too large -- an 8h absence at 3 cps paid 43,200,000 instead of 43,200. The
+  // live loop divides identically at `earn(d.cps * dt / 1000)`.
+  const bonus = d.cps * (away / 1000) * offlineRate();
   // U3 (Time Insurance) is what makes offline count toward Ascend. Without it the award
   // is injected and must skip runEarned, or prestige points become farmable by closing
   // the tab. With it, offline is genuine income and goes through earn().
   if (treeRank('U3')) earn(bonus);
   else state.coins = Math.min(state.coins + bonus, CEIL);
   rt.offlineEarned = bonus;
+  // Consume the window. save() is only called every 2s and on pagehide, so without this a
+  // close-and-reopen inside that gap re-collects the same seconds on every reload.
+  state.lastSave = Date.now();
   // Seed idle time from the same window that was paid out. idleMs lives in rt and is
   // never persisted, so without this E2 reads 0 on every load and is silently dead
   // offline. Capped at the same window so you never compound time you were not paid for.
