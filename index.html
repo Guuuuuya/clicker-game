@@ -100,6 +100,17 @@ h2{
 .bmax{font-size:12px; color:var(--gold); letter-spacing:.1em}
 @media (prefers-reduced-motion: reduce){ .bbuy:active:not(:disabled){transform:none} }
 
+/* ---- upgrade icons ---- */
+.uico{
+  width:100%; aspect-ratio:1; display:flex; align-items:center; justify-content:center;
+  font-size:24px; line-height:1; background:var(--panel2); border:1px solid var(--line);
+  border-radius:8px; cursor:pointer;
+}
+.uico:hover:not(:disabled){border-width:2px; border-color:var(--accent); box-shadow:var(--glow)}
+.uico:active:not(:disabled){transform:translateY(1px)}
+.uico:disabled{opacity:.35; cursor:not-allowed}
+@media (prefers-reduced-motion: reduce){ .uico:active:not(:disabled){transform:none} }
+
 /* ---- click target (canvas bill lands in step 10) ---- */
 #bill{
   width:240px; height:120px; border-radius:8px; cursor:pointer; user-select:none;
@@ -205,6 +216,9 @@ function fmt(v) {
   let i = 0, n = v;
   while (n >= 1000 && i < SUF.length - 1) { n /= 1000; i++; }
   if (n >= 999.5 && i < SUF.length - 1) { n /= 1000; i++; }
+  // Ladder ends at Td (1e45) but the CEIL clamp permits 1.8e302, so anything past
+  // the ladder goes exponential rather than printing a raw float with a wrong suffix.
+  if (i === SUF.length - 1 && n >= 999.5) return v.toExponential(2);
   return (n < 10 ? n.toFixed(2) : n < 100 ? n.toFixed(1) : Math.floor(n)) + SUF[i];
 }
 
@@ -221,9 +235,53 @@ const CAP = 1000;                       // hard cap per building. 1.15^6000 stil
                                         // overflows Number, so CEIL is the real guard.
 const totalBuildings = () => state.buildings.reduce((a, b) => a + b, 0);
 
-// Coin-cost discount. Factors arrive with their systems: u_g1/u_g7 in step 3,
-// tree E1 in step 6, perk L1 in step 7.
-const discount = () => 1;
+// ---------------------------------------------------------------- upgrades
+// Buildings and upgrades are separate systems with separate lifetimes. Upgrades
+// multiply, disappear permanently when bought, and are lost on Ascend and Legacy.
+// u_b0..u_b4 multiply their own building only (per the branch table), not all cps.
+const UPGRADES = [
+  { id: 'u_c1', name: 'Reinforced Knuckles', icon: '✊', effect: '×2 click',        cost: 100,     unlock: () => true },
+  { id: 'u_c2', name: 'Weighted Glove',      icon: '🥊', effect: '×2 click',        cost: 2000,    unlock: s => s.clicks >= 100 },
+  { id: 'u_c3', name: 'Second Hand',         icon: '✋', effect: '×3 click',        cost: 40000,   unlock: s => s.clicks >= 500 },
+  { id: 'u_c4', name: 'Autoclicker Mk I',    icon: '🤖', effect: '+2 cps',          cost: 500,     unlock: s => s.clicks >= 50 },
+  { id: 'u_c5', name: 'Cloned Hands',        icon: '🖐', effect: 'clicks add 1% cps', cost: 20000,  unlock: s => s.clicks >= 250 },
+  { id: 'u_c6', name: 'Golden Glove ★',   icon: '🌟', effect: '×10 click',       cost: 1000000, unlock: s => s.clicks >= 1000 },
+
+  { id: 'u_b0', name: 'Overclocked Servo',   icon: '▣', effect: 'Auto I ×3',       cost: 300,     unlock: s => s.buildings[0] >= 10 },
+  { id: 'u_b1', name: 'Tuned Assembly',      icon: '▤', effect: 'Auto II ×3',      cost: 5000,    unlock: s => s.buildings[1] >= 10 },
+  { id: 'u_b2', name: 'Smelting Line',       icon: '▥', effect: 'Auto III ×3',     cost: 60000,   unlock: s => s.buildings[2] >= 10 },
+  { id: 'u_b3', name: 'Quantum Plant',       icon: '▦', effect: 'Auto IV ×3',      cost: 700000,  unlock: s => s.buildings[3] >= 10 },
+  { id: 'u_b4', name: 'Self-Improving Mill', icon: '▧', effect: 'Auto V ×3',       cost: 8000000, unlock: s => s.buildings[4] >= 10 },
+
+  { id: 'u_g1', name: 'Bulk Buying',       icon: '🛒', effect: 'building costs ×0.9',           cost: 1000,    unlock: s => totalBuildings() >= 10 },
+  { id: 'u_g2', name: 'Economies of Scale',icon: '📈', effect: 'all cps ×1.5',                 cost: 20000,   unlock: s => totalBuildings() >= 20 },
+  { id: 'u_g3', name: 'Additive Boost ★',icon: '➕', effect: 'all cps ×2',                    cost: 250000,  unlock: s => totalBuildings() >= 35 },
+  { id: 'u_g4', name: 'Compound Engine',   icon: '🧬', effect: 'cps ×1.05 per building',      cost: 2000000, unlock: s => totalBuildings() >= 50 },
+  { id: 'u_g5', name: 'Interest Rate',     icon: '🏦', effect: 'cps ×1.25',                    cost: 25000000,unlock: () => d.cps >= 1e6 },
+  { id: 'u_g6', name: 'Credit Line',       icon: '💳', effect: 'cps ×(1 + coins / 1e7)',       cost: 50000,   unlock: s => s.totalEarned >= 1e7 },
+  { id: 'u_g7', name: 'Recruitment Drive', icon: '📉', effect: 'building costs ×0.75',         cost: 500000,  unlock: s => totalBuildings() >= 40 },
+  { id: 'u_g8', name: 'Bargain Bin ★',   icon: '🏷', effect: 'all upgrade costs ×0.8',        cost: 5000000, unlock: s => s.upgrades.length >= 5 },
+  { id: 'u_g9', name: 'Market Manipulation ★', icon: '🎲', effect: 'cps ×(1 + buildings / 10)', cost: 500000000, unlock: s => totalBuildings() >= 80 },
+];
+
+const has = id => state.upgrades.includes(id);
+const unlockCost = u => Math.floor(u.cost * (has('u_g8') ? 0.8 : 1));
+
+// Locked upgrades are never rendered. Conditions are re-read every paint, so an
+// upgrade appears the instant its condition flips true, with no purchase needed.
+const visibleUpgrades = () =>
+  UPGRADES.filter(u => !has(u.id) && u.unlock(state)).sort((a, b) => a.cost - b.cost);
+
+function buyUpgrade(u) {
+  const cost = unlockCost(u);
+  if (has(u.id) || !isFinite(cost) || cost > state.coins) return;
+  state.coins -= cost;
+  state.upgrades.push(u.id);
+  render();   // the icon goes now, not on the next tick
+}
+
+// Coin-cost discount. E1 (step 6) and L1 (step 7) extend this.
+const discount = () => Math.max(0.4, (has('u_g1') ? 0.9 : 1) * (has('u_g7') ? 0.75 : 1));
 
 // One shared exponent: every unit purchased raises every building's cost and output.
 const crossBoost = () => Math.pow(1.15, totalBuildings());
@@ -266,11 +324,38 @@ function buyBuilding(i) {
 
 // ---------------------------------------------------------------- derived (never stored)
 const d = { cps: 0, clickPower: 1 };
+
+function clickPower() {
+  // Upgrades are one-shot, so each factor is 1 or n, never n^rank.
+  let p = 1;
+  if (has('u_c1')) p *= 2;
+  if (has('u_c2')) p *= 2;
+  if (has('u_c3')) p *= 3;
+  if (has('u_c6')) p *= 10;
+  // Cloned Hands pays a share of cps per click. Additive, same reason as C2:
+  // a multiplicative factor here would be self-referential and undefined.
+  if (has('u_c5')) p += 0.01 * d.cps;
+  return p;
+}
+
 function calc() {
-  // Building-specific upgrades land in step 3, prestige multipliers in 5/6/7.
-  const raw = state.buildings.reduce((s, _, i) => s + state.buildings[i] * BUILDINGS[i].baseCps, 0);
-  d.cps = Math.min(raw * crossBoost(), CEIL);
-  d.clickPower = 1;
+  let cps = 0;
+  for (let i = 0; i < BUILDINGS.length; i++) {
+    cps += state.buildings[i] * BUILDINGS[i].baseCps * (has('u_b' + i) ? 3 : 1);
+  }
+  cps *= crossBoost();
+  if (has('u_g2')) cps *= 1.5;
+  if (has('u_g3')) cps *= 2;
+  if (has('u_g4')) cps *= Math.pow(1.05, totalBuildings());
+  if (has('u_g5')) cps *= 1.25;
+  // Reads coins held, which this same tick's production raises. calc() runs before
+  // coins are credited, so it settles on the previous tick's value instead of looping.
+  if (has('u_g6')) cps *= 1 + state.coins / 1e7;
+  if (has('u_g9')) cps *= 1 + totalBuildings() / 10;
+  if (has('u_c4')) cps += 2;
+  // Prestige multipliers (steps 5/6/7), milk, seasons, achievements, frenzy fold in later.
+  d.cps = Math.min(cps, CEIL);
+  d.clickPower = Math.min(clickPower(), CEIL);
 }
 
 // ---------------------------------------------------------------- economy
@@ -304,7 +389,7 @@ function tick() {
 
 // ---------------------------------------------------------------- render
 const AMOUNTS = [['1', 1], ['10', 10], ['100', 100], ['MAX', 'max']];
-const ui2 = { rows: [], sel: [] };
+const ui2 = { rows: [], sel: [], ups: new Map(), upKey: '' };
 
 function buildBuildingsUI() {
   const sel = $('buysel');
@@ -355,6 +440,29 @@ function paintBuildings() {
   });
 }
 
+function paintUpgrades() {
+  const list = visibleUpgrades();
+  const key = list.map(u => u.id).join(',');
+  if (key !== ui2.upKey) {
+    ui2.upKey = key;
+    ui2.ups.clear();
+    const host = $('upgrades');
+    host.querySelectorAll('.uico').forEach(n => n.remove());
+    for (const u of list) {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.className = 'uico';
+      b.textContent = u.icon;
+      b.title = `${u.name} — ${u.effect} — ${fmt(unlockCost(u))} cookies`;
+      b.setAttribute('aria-label', b.title);
+      b.addEventListener('click', () => buyUpgrade(u));
+      host.append(b);
+      ui2.ups.set(u.id, b);
+    }
+  }
+  for (const u of list) ui2.ups.get(u.id).disabled = unlockCost(u) > state.coins;
+}
+
 function render() {
   $('bal').textContent = fmt(state.coins);
   $('cps').textContent = fmt(d.cps);
@@ -363,6 +471,7 @@ function render() {
     `×${(1 + 0.25 * state.legacy.earned).toFixed(1)} legacy · ` +
     `${fmt(state.ascend.points)} pts · ${fmt(state.legacy.points)} legacy`;
   paintBuildings();
+  paintUpgrades();
 }
 
 // ---------------------------------------------------------------- boot
