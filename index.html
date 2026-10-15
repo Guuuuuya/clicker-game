@@ -43,16 +43,20 @@ header{padding:var(--s4) var(--s5) var(--s3)}
   margin-top:var(--s2); font-size:12px; color:var(--dim); display:flex; gap:var(--s4);
   flex-wrap:wrap;
 }
-.tabs{margin-left:auto; display:flex; flex-direction:column; gap:var(--s1)}
+/* Cookie Clicker puts the panel tabs in a horizontal row at the top right, beside the
+   milk and sound icons, not in a vertical stack down the far side. */
+.tabs{margin-left:auto; display:flex; flex-direction:row; gap:var(--s1)}
 .tabs button{
   width:34px; height:34px; background:var(--panel2); border:1px solid var(--line);
   border-radius:6px; cursor:pointer; font-size:15px; opacity:.6;
 }
 
 /* ---- layout ---- */
+/* Order mirrors Cookie Clicker: buildings left of the bill, upgrades right of it.
+   The skill tree is ours, not CC's, and sits in the remaining right column. */
 main{
   display:grid; gap:var(--s3); padding:0 var(--s5) var(--s5);
-  grid-template-columns:300px 84px 1fr 300px; align-items:start;
+  grid-template-columns:300px 1fr 84px 300px; align-items:start;
 }
 .col{display:flex; flex-direction:column; gap:var(--s2)}
 .center{display:flex; flex-direction:column; align-items:center; gap:var(--s4)}
@@ -315,16 +319,19 @@ select.btn{padding-right:var(--s2)}
 
 @media (prefers-reduced-motion: reduce){ .btn:active:not(:disabled){transform:none} }
 
+/* Below 1200 there is no room for four columns. The upgrade column drops to a
+   horizontal strip under the bill rather than moving to the other side of it. */
 @media (max-width:1200px){
   main{grid-template-columns:300px 1fr 300px}
-  #upgrades{grid-column:1; grid-row:2; flex-direction:row}
   #buildings{grid-column:1; grid-row:1}
-  .center{grid-column:2; grid-row:1 / span 2}
-  #tree{grid-column:3; grid-row:1 / span 2}
+  .center{grid-column:2; grid-row:1}
+  #tree{grid-column:3; grid-row:1}
+  #upgrades{grid-column:2; grid-row:2; flex-direction:row}
 }
 @media (max-width:900px){
   main{grid-template-columns:1fr; padding:0 var(--s3) var(--s5)}
   #buildings,#upgrades,.center,#tree{grid-column:1; grid-row:auto}
+  #upgrades{flex-direction:row}
   #tree{min-width:240px; overflow-x:auto}
   header{padding:var(--s3)}
 }
@@ -360,10 +367,6 @@ select.btn{padding-right:var(--s2)}
     <div class="milkbar" id="milkbar"><i></i><b id="milktip"></b></div>
   </section>
 
-  <section id="upgrades" class="col panel">
-    <h2>Upgrades</h2>
-  </section>
-
   <div class="center">
     <div class="billwrap">
       <canvas id="bill" width="240" height="120" role="button" tabindex="0"
@@ -382,6 +385,10 @@ select.btn{padding-right:var(--s2)}
       <div id="banners"></div>
     </section>
   </div>
+
+  <section id="upgrades" class="col panel">
+    <h2>Upgrades</h2>
+  </section>
 
   <section id="tree" class="col panel">
     <h2>Skill Tree</h2>
@@ -456,7 +463,13 @@ const store = {
 };
 state.ui.persistent = lsOK;
 
+// A reset deletes the save and then reloads. The reload fires pagehide, and the
+// pagehide handler saves. Without this guard the flush writes the state straight back
+// on the way out and the "reset" restores everything it just deleted.
+let wiping = false;
+
 function save() {
+  if (wiping) return;
   state.lastSave = Date.now();
   store.set(KEY, JSON.stringify({ v: SAVE_VERSION, state }));
 }
@@ -521,9 +534,20 @@ const BUILDINGS = [
   { id:'b4', label:'Auto V',   icon:'▦', baseCost:500000,  baseCps:6400,  lore:'At this scale output is measured in lifetimes rather than minutes.' },
   { id:'b5', label:'Auto VI',  icon:'▧', baseCost:5000000, baseCps:51000, lore:'We stopped calling it a factory. Now it is simply The Machine.' },
 ];
-const CAP = 1000;                       // hard cap per building. 1.15^6000 still
-                                        // overflows Number, so CEIL is the real guard.
+// Each building escalates on its OWN count, not on the total across all six.
+// Cookie Clicker actually uses one shared exponent; this is a deliberate deviation,
+// chosen so buying more of one building never inflates the price of another.
+// Cost and output have to move together: if only the price went per-building, the
+// top tier's first unit would cost 5e6 flat while still collecting the whole base's
+// boost, and the economy would fall apart.
+const ESCALATE = 1.12;
+const CAP = 1000;                       // hard cap per building
 const totalBuildings = () => state.buildings.reduce((a, b) => a + b, 0);
+// Total output of building i: every owned unit yields baseCps, and the whole building
+// escalates on its own count. The owned-count factor is load-bearing -- omit it and a
+// fresh game starts at 58,313 cps for free, the sum of all six baseCps values.
+const buildingCps = i =>
+  state.buildings[i] * BUILDINGS[i].baseCps * Math.pow(ESCALATE, state.buildings[i]);
 
 // ---------------------------------------------------------------- upgrades
 // Buildings and upgrades are separate systems with separate lifetimes. Upgrades
@@ -579,8 +603,8 @@ const discount = () => Math.max(
 );
 
 // One shared exponent: every unit purchased raises every building's cost and output.
-const crossBoost = () => Math.pow(1.15, totalBuildings());
-const unitPrice = (i, extra) => Math.floor(BUILDINGS[i].baseCost * Math.pow(1.15, totalBuildings() + extra) * discount());
+const unitPrice = (i, extra) =>
+  Math.floor(BUILDINGS[i].baseCost * Math.pow(ESCALATE, state.buildings[i] + extra) * discount());
 
 // Sum of individually floored unit prices. Never floor() the sum.
 function costOf(i, n) {
@@ -590,7 +614,7 @@ function costOf(i, n) {
 }
 
 // MAX is bounded twice: the 1000 cap bounds the loop, the balance check bounds it
-// far sooner and is the only thing stopping 1.15^k from overflowing mid-walk.
+// far sooner and is the only thing stopping 1.12^k from overflowing mid-walk.
 function maxAffordable(i) {
   const room = CAP - state.buildings[i];
   let n = 0, sum = 0;
@@ -646,9 +670,8 @@ function clickPower() {
 function calc() {
   let cps = 0;
   for (let i = 0; i < BUILDINGS.length; i++) {
-    cps += state.buildings[i] * BUILDINGS[i].baseCps * (has('u_b' + i) ? 3 : 1);
+    cps += buildingCps(i) * (has('u_b' + i) ? 3 : 1);
   }
-  cps *= crossBoost();
   if (has('u_g2')) cps *= 1.5;
   if (has('u_g3')) cps *= 2;
   if (has('u_g4')) cps *= Math.pow(1.05, totalBuildings());
@@ -1803,6 +1826,7 @@ function wirePrefs() {
   $('ptreset').addEventListener('click', () => {
     if (!confirm('Delete all progress? This cannot be undone.')) return;
     if (!confirm('Really delete everything? Buildings, upgrades, ascends, all of it.')) return;
+    wiping = true;
     store.del(KEY);
     location.reload();
   });
