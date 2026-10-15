@@ -672,9 +672,9 @@ const UPGRADES = [
   { id: 'u_g1', name: 'Bulk Buying',       icon: '🛒', effect: 'building costs ×0.9',           cost: 1000,    unlock: s => totalBuildings() >= 10 },
   { id: 'u_g2', name: 'Economies of Scale',icon: '📈', effect: 'all cps ×1.5',                 cost: 20000,   unlock: s => totalBuildings() >= 20 },
   { id: 'u_g3', name: 'Additive Boost ★',icon: '➕', effect: 'all cps ×2',                    cost: 250000,  unlock: s => totalBuildings() >= 35 },
-  { id: 'u_g4', name: 'Compound Engine',   icon: '🧬', effect: 'cps ×1.05 per building',      cost: 2000000, unlock: s => totalBuildings() >= 50 },
+  { id: 'u_g4', name: 'Compound Engine',   icon: '🧬', effect: 'cps ×1.05 per building, max ×350', cost: 2000000, unlock: s => totalBuildings() >= 50 },
   { id: 'u_g5', name: 'Interest Rate',     icon: '🏦', effect: 'cps ×1.25',                    cost: 25000000,unlock: () => d.cps >= 1e6 },
-  { id: 'u_g6', name: 'Credit Line',       icon: '💳', effect: 'cps ×(1 + coins / 1e7)',       cost: 50000,   unlock: s => s.totalEarned >= 1e7 },
+  { id: 'u_g6', name: 'Credit Line',       icon: '💳', effect: 'cps ×(1 + coins / 1e7), capped',  cost: 50000,   unlock: s => s.totalEarned >= 1e7 },
   { id: 'u_g7', name: 'Recruitment Drive', icon: '📉', effect: 'building costs ×0.75',         cost: 500000,  unlock: s => totalBuildings() >= 40 },
   { id: 'u_g8', name: 'Bargain Bin ★',   icon: '🏷', effect: 'all upgrade costs ×0.8',        cost: 5000000, unlock: s => s.upgrades.length >= 5 },
   { id: 'u_g9', name: 'Market Manipulation ★', icon: '🎲', effect: 'cps ×(1 + buildings / 10)', cost: 500000000, unlock: s => totalBuildings() >= 80 },
@@ -797,11 +797,12 @@ function calc() {
   }
   if (has('u_g2')) cps *= 1.5;
   if (has('u_g3')) cps *= 2;
-  if (has('u_g4')) cps *= Math.pow(1.05, totalBuildings());
+  if (has('u_g4')) cps *= Math.pow(1.05, Math.min(totalBuildings(), U_G4_CAP));
   if (has('u_g5')) cps *= 1.25;
   // Reads coins held, which this same tick's production raises. calc() runs before
   // coins are credited, so it settles on the previous tick's value instead of looping.
-  if (has('u_g6')) cps *= 1 + state.coins / 1e7;
+  // Capped: the raw term fed itself, more cps buying more coins buying more cps.
+  if (has('u_g6')) cps *= 1 + Math.min(state.coins, U_G6_COIN_CAP) / 1e7;
   if (has('u_g9')) cps *= 1 + totalBuildings() / 10;
   if (has('u_c4')) cps += 2;
   cps *= achBonus();
@@ -1220,6 +1221,24 @@ function render() {
 
 // ---------------------------------------------------------------- ascend
 const ASCEND_AT = 1e6;
+
+// One Ascend must not buy the whole tree. ascendGain() scales with sqrt(runEarned/gate), so a
+// run reaching 1e12 lifetime paid 1000 points against a 591-point tree -- the entire skill
+// tree in a single prestige, then again and again. The M1/L7 factors push it higher still.
+// A ceiling keeps long runs rewarding without making the tree a one-click purchase: at the cap
+// it takes at least four strong Ascends, and a typical run still lands in the 1-30 range.
+const ASCEND_MAX_GAIN = 150;
+
+// u_g4 used to be Math.pow(1.05, totalBuildings()) with nothing on top of it: x11.5 at its
+// 50-building unlock, x17k at 200, and 1.3e127 at the 6000-building cap. That one upgrade is
+// what recreated the runaway after the building layer was properly bounded, so the exponent is
+// capped rather than removed. It is still worth buying where it unlocks, and tops out at x350.
+const U_G4_CAP = 120;
+
+// u_g6 scales with coins held, so it fed itself: more cps, more coins, more cps. The coin
+// term is capped, not the multiplier, which keeps it a sensible x2 at its 1e7 unlock and stops
+// it at x101 once the player is rich enough that the cap is invisible.
+const U_G6_COIN_CAP = 1e9;
 const treeRank = id => state.tree[id] || 0;
 const perkRank = id => state.perks[id] || 0;
 const ascendMult = () => 1 + 0.15 * state.ascend.earned;
@@ -1232,7 +1251,9 @@ const legacyMult = () => 1 + 0.25 * state.legacy.earned;
 function ascendGain() {
   if (state.runEarned < ASCEND_AT) return 0;
   const m1 = treeRank('M1'), l7 = perkRank('L7');
-  return Math.floor(Math.sqrt(state.runEarned / ASCEND_AT) * (1 + 0.1 * m1) * (1 + 0.25 * l7));
+  const g = Math.floor(Math.sqrt(state.runEarned / ASCEND_AT) * (1 + 0.1 * m1) * (1 + 0.25 * l7));
+  // Never more than the ceiling, even with both multipliers applied. See ASCEND_MAX_GAIN.
+  return g > ASCEND_MAX_GAIN ? ASCEND_MAX_GAIN : g;
 }
 
 // L8 (step 7) dissolves the reset entirely. Otherwise U4 keeps 5% and L4 keeps 25%.
