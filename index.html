@@ -58,7 +58,7 @@ button{font:inherit; color:inherit}
 .bal{font-size:20px; color:var(--text)}
 .total{font-size:34px; line-height:1.05; color:var(--text); text-shadow:var(--glow); font-weight:600}
 .cpsline{font-size:16px; color:var(--bad)}
-.sub{font-size:12px; color:var(--dim); display:flex; gap:var(--s3); flex-wrap:wrap; justify-content:center}
+.sub{font-size:12px; color:var(--dim); display:flex; gap:var(--s3); flex-wrap:wrap; justify-content:center; overflow-wrap:anywhere; min-width:0}
 
 .col{display:flex; flex-direction:column; gap:var(--s2)}
 h2{
@@ -124,6 +124,10 @@ h2{
 
 /* ---- click target: canvas money bill (step 10) ---- */
 .billwrap{position:relative; width:240px; height:120px}
+/* The backing store is 240*dpr for crispness, but it must NOT also become the layout
+   size. With no CSS width the canvas laid out at 240*dpr CSS px -- 720px on a dpr-3 phone,
+   which stretched the grid and pushed every panel off-screen. Pin the layout size. */
+#bill{display:block; width:240px; height:120px}
 #bill{
   width:240px; height:120px; border-radius:8px; cursor:pointer;
   display:block; touch-action:manipulation;
@@ -364,8 +368,8 @@ select.btn{padding-right:var(--s2)}
   .right{grid-column:1 / -1}
 }
 @media (max-width:900px){
-  #app{grid-template-columns:1fr; padding:var(--s3)}
-  .left{position:static}
+  #app{grid-template-columns:minmax(0,1fr); padding:var(--s3)}
+  .left{position:static; min-width:0}
   .tabs{flex-direction:row; flex-wrap:wrap}
   #tree{min-width:0}
 }
@@ -1396,6 +1400,11 @@ function roundRect(ctx, x, y, w, h, r) {
 function drawBill() {
   const cv = $('bill');
   if (!cv || !cv.getContext) return;
+  // Mobile browsers discard 2D contexts when a tab is backgrounded. The `!billCtx` guard
+  // below checks the variable, never the context's health, so after a loss it kept a dead
+  // reference: clearRect and every draw silently no-op and the bill stays blank for the
+  // rest of the session. contextlost drops the reference so the next frame rebuilds it.
+  if (cv.isContextLost && cv.isContextLost()) { billCtx = null; bodyGrad = null; return; }
   if (!billCtx) {
     const dpr = window.devicePixelRatio || 1;
     cv.width = BILL.w * dpr;
@@ -2130,6 +2139,10 @@ function boot() {
   bill.addEventListener('keydown', e => {
     if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); click(); checkFrenzyClicks(); }
   });
+  // Belt and braces with the isContextLost() poll above: some engines restore the context
+  // without firing contextlost first, so drop the cached reference on either edge.
+  bill.addEventListener('contextlost', () => { billCtx = null; bodyGrad = null; });
+  bill.addEventListener('contextrestored', () => { billCtx = null; bodyGrad = null; });
   document.querySelectorAll('.tabs button').forEach(b => {
     b.addEventListener('click', () => openOvl(b.dataset.panel));
   });
