@@ -153,15 +153,25 @@ h2{
 .srow{display:flex; align-items:center; gap:var(--s2); margin-top:var(--s2); font-size:12px}
 .srow .pgain{flex:1}
 .milkbar{
-  height:8px; background:var(--panel2); border:1px solid var(--line); border-radius:6px;
+  height:16px; background:var(--panel2); border:1px solid var(--line); border-radius:8px;
   overflow:hidden; margin:var(--s1) 0; position:relative;
   width:240px; max-width:100%;
 }
-.milkbar i{display:block; height:100%; width:0; background:#e9fff0}
-.milkbar b{
-  position:absolute; inset:0; background:var(--bad); text-align:center;
-  font-size:8px; color:#fff; font-weight:400;
+/* The label was a solid red overlay painted ON TOP of the fill, so the fill was never
+   actually visible -- which is the whole point of the bar. The label is now just text. */
+.milkbar i{
+  display:block; height:100%; width:0; border-radius:7px;
+  background:linear-gradient(90deg,#14593a,#2c8f60); transition:width .25s;
 }
+/* The label spans the whole bar, so it sits over both the bright fill and the dark empty
+   track. A mid-bright fill made white text unreadable at the filled end; the fill is deep
+   green and the label carries a dark halo, which reads on either background. */
+.milkbar b{
+  position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+  font-size:11px; color:#f2fff8; font-weight:700; letter-spacing:.04em;
+  text-shadow:0 1px 2px rgba(0,0,0,.9), 0 0 4px rgba(0,0,0,.55); pointer-events:none;
+}
+@media (prefers-reduced-motion: reduce){ .milkbar i{transition:none} }
 #goldens{position:relative}
 .gcookie{
   position:absolute; width:34px; height:34px; border-radius:50%; z-index:40;
@@ -1550,7 +1560,7 @@ function drinkMilk() {
   state.milk.progress = 0;
   state.ascend.points += bonus;
   save();
-  toast(`Drank the milk. Rank reset, +${fmt(bonus)} ascend points.`, 'good', 6000);
+  toast(`Boost spent. Rank reset, +${fmt(bonus)} ascend points.`, 'good', 6000);
 }
 
 // ------------------------------------------------------------------ golden cookies
@@ -1717,7 +1727,12 @@ function paintParity() {
   const prevStep = MILK_STEPS[rank];
   const span = Math.max(1e-6, nextStep - prevStep);
   $('milkbar').firstElementChild.style.width = Math.min(100, (state.milk.progress - prevStep) / span * 100).toFixed(1) + '%';
-  $('milktip').textContent = rank >= MILK_STEPS.length - 1 ? 'MILK MAX' : `MILK ${rank} · ×${milkMult().toFixed(2)}`;
+  // "Boost" not "milk": the old name was Cookie Clicker flavour with no intrinsic meaning.
+// The mechanic is a meter you fill by clicking, where each tier is a permanent production
+// multiplier, and which you can cash in for prestige points. That reads as a boost.
+// Internal names (milkRank, MILK_STEPS, state.milk) are left alone deliberately -- renaming
+// them is invisible to the player and churns the save format and ten test suites.
+$('milktip').textContent = rank >= MILK_STEPS.length - 1 ? 'BOOST MAX' : `BOOST ${rank} · ×${milkMult().toFixed(2)}`;
   $('milkbar').hidden = rank < 1 && state.milk.progress <= 0;
 }
 
@@ -1760,7 +1775,7 @@ function checkFrenzyClicks() {
 const CONSOLE_HELP = [
   'add [n]     grant coins (not counted as earned)',
   'build [n]   grant n units of a random building, up to the 1000 cap',
-  'milk [n]    set milk rank (0-8)',
+  'boost [n]   set boost tier (0-8)',
   'golden      spawn a golden cookie now',
   'ascend      trigger an Ascend',
   'legacy      trigger a Legacy',
@@ -1780,7 +1795,7 @@ function runConsole(line) {
       state.buildings[i] = Math.min(CAP, state.buildings[i] + k);
       return `+${k} ${BUILDINGS[i].label}`;
     }
-    case 'milk': state.milk.progress = MILK_STEPS[Math.max(0, Math.min(8, isFinite(n) ? n : 8))]; return `milk rank ${milkRank()}`;
+    case 'boost': state.milk.progress = MILK_STEPS[Math.max(0, Math.min(8, isFinite(n) ? n : 8))]; return `boost tier ${milkRank()}`;
     case 'golden': spawnGolden(); return 'golden cookie spawned';
     case 'ascend': doAscend(); return `ascend attempted (needs runEarned >= ${fmt(ASCEND_AT)})`;
     case 'legacy': doLegacy(); return 'legacy attempted (needs 3 ascends)';
@@ -1885,13 +1900,13 @@ function statsBody() {
     ['Skill tree', `${TREE.reduce((a,n)=>a+treeRank(n.id),0)} / ${TREE_TOTAL}`],
     ['Legacy perks', `${PERKS.reduce((a,p)=>a+perkRank(p.id),0)} / ${PERKS_TOTAL}`],
     ['Achievements', `${achUnlocked()} / ${ACHIEVEMENTS.length} · ×${achBonus().toFixed(2)}`],
-    ['Milk', `rank ${milkRank()} · ×${milkMult().toFixed(2)} · ${state.milk.lifetime.toFixed(2)} lifetime`],
+    ['Boost', `tier ${milkRank()} · ×${milkMult().toFixed(2)} · ${state.milk.lifetime.toFixed(2)} lifetime`],
   ];
   let html = rows.map(([k, v]) =>
     `<div class="statrow"><span class="k">${k}</span><span class="v">${v}</span></div>`).join('');
-  if (milkRank() >= 1) html += '<div class="ovlrow"><label>Drink the milk' +
-    `<span class="hint">Resets rank ${milkRank()} to 0 for ${fmt(Math.floor(state.ascend.earned * 0.1))} ascend points</span>` +
-    '</label><button class="btn" id="drink" type="button">Drink</button></div>';
+  if (milkRank() >= 1) html += '<div class="ovlrow"><label>Spend the boost' +
+    `<span class="hint">Resets tier ${milkRank()} to 0 for ${fmt(Math.floor(state.ascend.earned * 0.1))} ascend points</span>` +
+    '</label><button class="btn" id="drink" type="button">Spend</button></div>';
   return html;
 }
 
